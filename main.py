@@ -100,9 +100,18 @@ async def send_verification_request(update: Update, context: ContextTypes.DEFAUL
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
+    join_message = (
+        "⚠️ 𝙋𝙡𝙚𝙖𝙨𝙚 𝙅𝙤𝙞𝙣 𝙊𝙪𝙧 𝘾𝙝𝙖𝙣𝙣𝙚𝙡 𝙩𝙤 𝙐𝙨𝙚 𝙏𝙝𝙞𝙨 𝘽𝙤𝙩!\n\n"
+        "📢 𝗢𝘂𝗿 𝗰𝗵𝗮𝗻𝗻𝗲𝗹 𝗽𝗿𝗼𝘃𝗶𝗱𝗲𝘀:\n"
+        "— 📝 𝗜𝗺𝗽𝗼𝗿𝘁𝗮𝗻𝘁 𝗨𝗽𝗱𝗮𝘁𝗲𝘀\n"  
+        "— 🎁 𝗙𝗿𝗲𝗲 𝗥𝗲𝘀𝗼𝘂𝗿𝗰𝗲𝘀\n"  
+        "— 📚 𝗗𝗮𝗶𝗹𝘆 𝗤𝘂𝗶𝘇 & 𝗚𝘂𝗶𝗱𝗮𝗻𝗰𝗲\n"  
+        "— ❗ 𝗘𝘅𝗰𝗹𝘂𝘀𝗶𝘃𝗲 𝗖𝗼𝗻𝘁𝗲𝗻𝘁\n\n"
+        "✅ 𝘼𝙛𝙩𝙚𝙧 𝙅𝙤𝙞𝙣𝙞𝙣𝙜, 𝙩𝙖𝙥 \"𝐈'𝐯𝐞 𝐉𝐨𝐢𝐧𝐞𝐝\" 𝙗𝙚𝙡𝙤𝙬 𝙩𝙤 𝙘𝙤𝙣𝙩𝙞𝙣𝙪𝙚!"
+    )
+    
     await update.message.reply_text(
-        "⚠️ Please join our channel to use this bot!\n"
-        "After joining, click 'I've Joined' to verify.",
+        join_message,
         reply_markup=reply_markup
     )
 
@@ -126,10 +135,12 @@ async def check_membership_callback(update: Update, context: ContextTypes.DEFAUL
                 )
                 logger.info(f"User {user_id} verified successfully")
             else:
-                await query.edit_message_text(
-                    "❌ You're still not in the channel!\n"
-                    "Please join first and try again."
+                warning_message = (
+                    "❌ 𝙔𝙤𝙪'𝙧𝙚 𝙨𝙩𝙞𝙡𝙡 𝙣𝙤𝙩 𝙞𝙣 𝙩𝙝𝙚 𝙘𝙝𝙖𝙣𝙣𝙚𝙡!\n\n"
+                    "😏 𝘿𝙤𝙣'𝙩 𝙗𝙚 𝙤𝙫𝙚𝙧𝙨𝙢𝙖𝙧𝙩 — 𝙩𝙝𝙞𝙨 𝙗𝙤𝙩 𝙬𝙤𝙣'𝙩 𝙬𝙤𝙧𝙠 𝙪𝙣𝙩𝙞𝙡 𝙮𝙤𝙪 𝙟𝙤𝙞𝙣!\n\n"
+                    "📢 𝙋𝙡𝙚𝙖𝙨𝙚 𝙟𝙤𝙞𝙣 𝙩𝙝𝙚 𝙘𝙝𝙖𝙣𝙣𝙚𝙡 𝙛𝙞𝙧𝙨𝙩 𝙖𝙣𝙙 𝙩𝙝𝙚𝙣 𝙩𝙧𝙮 𝙖𝙜𝙖𝙞𝙣."
                 )
+                await query.edit_message_text(warning_message)
                 logger.info(f"User {user_id} still not in channel")
         except Exception as e:
             logger.error(f"Callback membership error: {e}")
