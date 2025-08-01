@@ -18,6 +18,10 @@ from telegram.ext import (
 # Create Flask app for health check
 app = Flask(__name__)
 
+@app.route('/')
+def home():
+    return "Bot is running", 200
+
 @app.route('/health')
 def health_check():
     return Response(status=200)
@@ -220,7 +224,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Format stats message
         stats_message = (
-            "📊 𝙎𝙩𝙖𝙩𝙨 𝙤𝙛 '𝙐𝙨𝙚𝙧 𝙑𝙚𝙧𝙞𝙛𝙞𝙘𝙖𝙩𝙞𝙤𝙣':\n\n"
+            "📊 𝙎𝙩𝙖𝙩𝙨 𝙤𝙛 '𝐁𝐨𝐭 𝐍𝐚𝐦𝐞':\n\n"
             f"🏓 𝙋𝙞𝙣𝙜 𝙋𝙤𝙣𝙜: {ping_time:.2f} ms\n"
             f"👥 𝙏𝙤𝙩𝙖𝙡 𝙐𝙨𝙚𝙧𝙨: {user_count}\n"
             f"⚙️ 𝘽𝙤𝙩 𝙐𝙥𝙩𝙞𝙢𝙚: {uptime_str}\n\n"
