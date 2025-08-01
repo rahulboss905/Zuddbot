@@ -54,8 +54,8 @@ except Exception as e:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
-        username = update.effective_user.username or "N/A"
-        first_name = update.effective_user.first_name or "User"
+        username = update.effective_user.username or "User"
+        first_name = update.effective_user.first_name or "Member"
         
         logger.info(f"New user: {user_id} ({username})")
         
@@ -73,10 +73,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             member = await context.bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
             if member.status in ['member', 'administrator', 'creator']:
-                await update.message.reply_text(
-                    f"👋 Welcome {first_name}! You're verified!\n"
-                    "Use /link to get access to our community group."
+                welcome_message = (
+                    "╭───❖━❀🌟❀━❖───╮\n"
+                    f"  𝗪𝗲𝗹𝗰𝗼𝗺𝗲, {first_name}! 🎉\n"
+                    "╰───❖━❀🌟❀━❖───╯\n\n"
+                    "🙏 𝗧𝗵𝗮𝗻𝗸 𝘆𝗼𝘂 𝗳𝗼𝗿 𝘀𝘂𝗯𝘀𝗰𝗿𝗶𝗯𝗶𝗻𝗴 𝘁𝗼 𝗼𝘂𝗿 𝗰𝗵𝗮𝗻𝗻𝗲𝗹!\n"
+                    "🎯 𝗪𝗲’𝗿𝗲 𝗴𝗹𝗮𝗱 𝘁𝗼 𝗵𝗮𝘃𝗲 𝘆𝗼𝘂 𝗵𝗲𝗿𝗲.\n\n"
+                    "➡️ 𝗧𝗼 𝗴𝗲𝘁 𝘁𝗵𝗲 𝗴𝗿𝗼𝘂𝗽 𝗹𝗶𝗻𝗸, 𝗷𝘂𝘀𝘁 𝘀𝗲𝗻𝗱:\n\n"
+                    "🔗 `/link`"
                 )
+                await update.message.reply_text(welcome_message)
                 logger.info(f"User {user_id} is verified")
             else:
                 await send_verification_request(update, context)
