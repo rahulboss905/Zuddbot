@@ -1,7 +1,6 @@
 services:
-  - type: web
+  - type: worker
     name: telegram-channel-bot
-    runtime: docker
     env: docker
     envVars:
       - key: TELEGRAM_BOT_TOKEN
@@ -16,3 +15,5 @@ services:
         fromGroup: telegram-bot-envs
       - key: ADMIN_USER_ID
         fromGroup: telegram-bot-envs
+    healthCheckPath: /health
+    healthCheckTimeoutSeconds: 10
