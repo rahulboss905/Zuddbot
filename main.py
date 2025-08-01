@@ -224,7 +224,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Format stats message
         stats_message = (
-            "📊 𝙎𝙩𝙖𝙩𝙨 𝙤𝙛 '𝐁𝐨𝐭 𝐍𝐚𝐦𝐞':\n\n"
+            "📊 𝙎𝙩𝙖𝙩𝙨 𝙤𝙛 '𝐓𝐄𝐀𝐌 𝐒𝐄𝐂𝐑𝐄𝐓 𝐔𝐒𝐄𝐑 𝐕𝐄𝐑𝐈𝐅𝐈𝐂𝐀𝐓𝐈𝐎𝐍':\n\n"
             f"🏓 𝙋𝙞𝙣𝙜 𝙋𝙤𝙣𝙜: {ping_time:.2f} ms\n"
             f"👥 𝙏𝙤𝙩𝙖𝙡 𝙐𝙨𝙚𝙧𝙨: {user_count}\n"
             f"⚙️ 𝘽𝙤𝙩 𝙐𝙥𝙩𝙞𝙢𝙚: {uptime_str}\n\n"
