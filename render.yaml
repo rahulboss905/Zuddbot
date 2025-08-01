@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: telegram-channel-bot
+    runtime: docker
+    env: docker
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        fromGroup: telegram-bot-envs
+      - key: TELEGRAM_CHANNEL_ID
+        fromGroup: telegram-bot-envs
+      - key: TELEGRAM_INVITE_LINK
+        fromGroup: telegram-bot-envs
+      - key: TELEGRAM_GROUP_LINK
+        fromGroup: telegram-bot-envs
+      - key: MONGODB_URI
+        fromGroup: telegram-bot-envs
+      - key: ADMIN_USER_ID
+        fromGroup: telegram-bot-envs
