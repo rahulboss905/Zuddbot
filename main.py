@@ -10,7 +10,9 @@ from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
     CommandHandler,
-    CallbackQueryHandler
+    CallbackQueryHandler,
+    MessageHandler,
+    filters
 )
 
 # Create Flask app for health check
@@ -63,6 +65,9 @@ except Exception as e:
     logger.error(f"MongoDB connection failed: {e}")
     exit(1)
 
+async def is_owner(user_id: int) -> bool:
+    return str(user_id) == ADMIN_USER_ID
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -77,7 +82,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             users_collection.insert_one({
                 "user_id": user_id,
                 "username": username,
-                "first_name": first_name
+                "first_name": first_name,
+                "date_added": time.time()
             })
             logger.info(f"Added new user to DB: {user_id}")
         
@@ -119,7 +125,7 @@ async def send_verification_request(update: Update, context: ContextTypes.DEFAUL
         "— 🎁 𝗙𝗿𝗲𝗲 𝗥𝗲𝘀𝗼𝘂𝗿𝗰𝗲𝘀\n"  
         "— 📚 𝗗𝗮𝗶𝗹𝘆 𝗤𝘂𝗶𝘇 & 𝗚𝘂𝗶𝗱𝗮𝗻𝗰𝗲\n"  
         "— ❗ 𝗘𝘅𝗰𝗹𝘂𝘀𝗶𝘃𝗲 𝗖𝗼𝗻𝘁𝗲𝗻𝘁\n\n"
-        "✅ 𝘼𝙛𝙩𝙚𝙧 𝙅𝙤𝙞𝙣𝙞𝙣𝙜, 𝙩𝙖𝙥 \"𝐈'𝐯𝐞 𝐉𝐨𝐢𝐧𝐞𝐝\" 𝙗𝙚𝙡𝙤𝙬 �𝙤 𝙘𝙤𝙣𝙩𝙞𝙣𝙪𝙚!"
+        "✅ 𝘼𝙛𝙩𝙚𝙧 𝙅𝙤𝙞𝙣𝙞𝙣𝙜, 𝙩𝙖𝙥 \"𝐈'𝐯𝐞 𝐉𝐨𝐢𝐧𝐞𝐝\" 𝙗𝙚𝙡𝙤𝙬 𝙩𝙤 𝙘𝙤𝙣𝙩𝙞𝙣𝙪𝙚!"
     )
     
     await update.message.reply_text(
@@ -150,7 +156,7 @@ async def check_membership_callback(update: Update, context: ContextTypes.DEFAUL
                 warning_message = (
                     "❌ 𝙔𝙤𝙪'𝙧𝙚 𝙨𝙩𝙞𝙡𝙡 𝙣𝙤𝙩 𝙞𝙣 𝙩𝙝𝙚 𝙘𝙝𝙖𝙣𝙣𝙚𝙡!\n\n"
                     "😏 𝘿𝙤𝙣'𝙩 𝙗𝙚 𝙤𝙫𝙚𝙧𝙨𝙢𝙖𝙧𝙩 — 𝙩𝙝𝙞𝙨 𝙗𝙤𝙩 𝙬𝙤𝙣'𝙩 𝙬𝙤𝙧𝙠 𝙪𝙣𝙩𝙞𝙡 𝙮𝙤𝙪 𝙟𝙤𝙞𝙣!\n\n"
-                    "📢 𝙋𝙡𝙚𝙖𝙨𝙚 𝙟𝙤𝙞𝙣 �𝙝𝙚 𝙘𝙝𝙖𝙣𝙣𝙚𝙡 𝙛𝙞𝙧𝙨𝙩 𝙖𝙣𝙙 𝙩𝙝𝙚𝙣 �𝙧𝙮 𝙖𝙜𝙖𝙞𝙣."
+                    "📢 𝙋𝙡𝙚𝙖𝙨𝙚 𝙟𝙤𝙞𝙣 𝙩𝙝𝙚 𝙘𝙝𝙖𝙣𝙣𝙚𝙡 𝙛𝙞𝙧𝙨𝙩 𝙖𝙣𝙙 𝙩𝙝𝙚𝙣 𝙩𝙧𝙮 𝙖𝙜𝙖𝙞𝙣."
                 )
                 await query.edit_message_text(warning_message)
                 logger.info(f"User {user_id} still not in channel")
@@ -186,8 +192,8 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         logger.info(f"Stats command from user: {user_id}")
         
-        if str(user_id) != ADMIN_USER_ID:
-            await update.message.reply_text("❌ This command is for admins only!")
+        if not await is_owner(user_id):
+            await update.message.reply_text("❌ This command is for bot owner only!")
             logger.warning(f"Unauthorized stats access attempt by {user_id}")
             return
         
@@ -228,13 +234,84 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Stats command error: {e}")
 
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        user_id = update.effective_user.id
+        logger.info(f"Broadcast command from user: {user_id}")
+        
+        if not await is_owner(user_id):
+            await update.message.reply_text("❌ This command is for bot owner only!")
+            logger.warning(f"Unauthorized broadcast attempt by {user_id}")
+            return
+        
+        if not context.args:
+            await update.message.reply_text(
+                "⚠️ Please provide a message to broadcast.\n"
+                "Usage: /broadcast <your message>"
+            )
+            return
+        
+        message = ' '.join(context.args)
+        total_users = users_collection.count_documents({})
+        success_count = 0
+        failed_count = 0
+        
+        progress_msg = await update.message.reply_text(
+            f"📢 Starting broadcast to {total_users} users...\n"
+            f"✅ Success: {success_count}\n"
+            f"❌ Failed: {failed_count}"
+        )
+        
+        for user in users_collection.find():
+            try:
+                await context.bot.send_message(
+                    chat_id=user['user_id'],
+                    text=message
+                )
+                success_count += 1
+                
+                # Update progress every 10 sends
+                if success_count % 10 == 0:
+                    await progress_msg.edit_text(
+                        f"📢 Broadcasting to {total_users} users...\n"
+                        f"✅ Success: {success_count}\n"
+                        f"❌ Failed: {failed_count}"
+                    )
+            except Exception as e:
+                failed_count += 1
+                logger.error(f"Failed to send to user {user['user_id']}: {e}")
+        
+        await progress_msg.edit_text(
+            f"🎉 Broadcast completed!\n"
+            f"📢 Sent to: {total_users} users\n"
+            f"✅ Success: {success_count}\n"
+            f"❌ Failed: {failed_count}"
+        )
+        logger.info(f"Broadcast completed. Success: {success_count}, Failed: {failed_count}")
+        
+    except Exception as e:
+        logger.error(f"Broadcast command error: {e}")
+        await update.message.reply_text("⚠️ An error occurred during broadcast.")
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        user_id = update.effective_user.id
+        is_admin = await is_owner(user_id)
+        
         commands = [
             "/start - Begin using the bot",
             "/link - Get community group link",
             "/help - Show this help message"
         ]
+        
+        if is_admin:
+            admin_commands = [
+                "\n\n👑 Admin Commands:",
+                "/stats - View bot statistics",
+                "/broadcast <message> - Send message to all users"
+            ]
+            commands.extend(admin_commands)
+        
         await update.message.reply_text("\n".join(commands))
         logger.info(f"Help command sent to {update.effective_user.id}")
     except Exception as e:
@@ -258,6 +335,7 @@ def main():
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("link", link))
         application.add_handler(CommandHandler("stats", stats))
+        application.add_handler(CommandHandler("broadcast", broadcast))
         application.add_handler(CommandHandler("help", help_command))
         application.add_handler(CallbackQueryHandler(check_membership_callback))
         
