@@ -1,6 +1,8 @@
 import os
 import logging
 import threading
+import time
+import sys
 from flask import Flask, Response
 from pymongo import MongoClient
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -24,6 +26,16 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# Bot start time for uptime calculation
+bot_start_time = time.time()
+
+# Helper function to format uptime
+def format_uptime(seconds):
+    days, seconds = divmod(seconds, 86400)
+    hours, seconds = divmod(seconds, 3600)
+    minutes, seconds = divmod(seconds, 60)
+    return f"{int(days)}d {int(hours)}h {int(minutes)}m {int(seconds)}s"
 
 # Load environment variables
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -78,7 +90,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"  𝗪𝗲𝗹𝗰𝗼𝗺𝗲, {first_name}! 🎉\n"
                     "╰───❖━❀🌟❀━❖───╯\n\n"
                     "🙏 𝗧𝗵𝗮𝗻𝗸 𝘆𝗼𝘂 𝗳𝗼𝗿 𝘀𝘂𝗯𝘀𝗰𝗿𝗶𝗯𝗶𝗻𝗴 𝘁𝗼 𝗼𝘂𝗿 𝗰𝗵𝗮𝗻𝗻𝗲𝗹!\n"
-                    "🎯 𝗪𝗲’𝗿𝗲 𝗴𝗹𝗮𝗱 𝘁𝗼 𝗵𝗮𝘃𝗲 𝘆𝗼𝘂 𝗵𝗲𝗿𝗲.\n\n"
+                    "🎯 𝗪𝗲'𝗿𝗲 𝗴𝗹𝗮𝗱 𝘁𝗼 𝗵𝗮𝘃𝗲 𝘆𝗼𝘂 𝗵𝗲𝗿𝗲.\n\n"
                     "➡️ 𝗧𝗼 𝗴𝗲𝘁 𝘁𝗵𝗲 𝗴𝗿𝗼𝘂𝗽 𝗹𝗶𝗻𝗸, 𝗷𝘂𝘀𝘁 𝘀𝗲𝗻𝗱:\n\n"
                     "🔗 `/link`"
                 )
@@ -107,7 +119,7 @@ async def send_verification_request(update: Update, context: ContextTypes.DEFAUL
         "— 🎁 𝗙𝗿𝗲𝗲 𝗥𝗲𝘀𝗼𝘂𝗿𝗰𝗲𝘀\n"  
         "— 📚 𝗗𝗮𝗶𝗹𝘆 𝗤𝘂𝗶𝘇 & 𝗚𝘂𝗶𝗱𝗮𝗻𝗰𝗲\n"  
         "— ❗ 𝗘𝘅𝗰𝗹𝘂𝘀𝗶𝘃𝗲 𝗖𝗼𝗻𝘁𝗲𝗻𝘁\n\n"
-        "✅ 𝘼𝙛𝙩𝙚𝙧 𝙅𝙤𝙞𝙣𝙞𝙣𝙜, 𝙩𝙖𝙥 \"𝐈'𝐯𝐞 𝐉𝐨𝐢𝐧𝐞𝐝\" 𝙗𝙚𝙡𝙤𝙬 𝙩𝙤 𝙘𝙤𝙣𝙩𝙞𝙣𝙪𝙚!"
+        "✅ 𝘼𝙛𝙩𝙚𝙧 𝙅𝙤𝙞𝙣𝙞𝙣𝙜, 𝙩𝙖𝙥 \"𝐈'𝐯𝐞 𝐉𝐨𝐢𝐧𝐞𝐝\" 𝙗𝙚𝙡𝙤𝙬 �𝙤 𝙘𝙤𝙣𝙩𝙞𝙣𝙪𝙚!"
     )
     
     await update.message.reply_text(
@@ -138,7 +150,7 @@ async def check_membership_callback(update: Update, context: ContextTypes.DEFAUL
                 warning_message = (
                     "❌ 𝙔𝙤𝙪'𝙧𝙚 𝙨𝙩𝙞𝙡𝙡 𝙣𝙤𝙩 𝙞𝙣 𝙩𝙝𝙚 𝙘𝙝𝙖𝙣𝙣𝙚𝙡!\n\n"
                     "😏 𝘿𝙤𝙣'𝙩 𝙗𝙚 𝙤𝙫𝙚𝙧𝙨𝙢𝙖𝙧𝙩 — 𝙩𝙝𝙞𝙨 𝙗𝙤𝙩 𝙬𝙤𝙣'𝙩 𝙬𝙤𝙧𝙠 𝙪𝙣𝙩𝙞𝙡 𝙮𝙤𝙪 𝙟𝙤𝙞𝙣!\n\n"
-                    "📢 𝙋𝙡𝙚𝙖𝙨𝙚 𝙟𝙤𝙞𝙣 𝙩𝙝𝙚 𝙘𝙝𝙖𝙣𝙣𝙚𝙡 𝙛𝙞𝙧𝙨𝙩 𝙖𝙣𝙙 𝙩𝙝𝙚𝙣 𝙩𝙧𝙮 𝙖𝙜𝙖𝙞𝙣."
+                    "📢 𝙋𝙡𝙚𝙖𝙨𝙚 𝙟𝙤𝙞𝙣 �𝙝𝙚 𝙘𝙝𝙖𝙣𝙣𝙚𝙡 𝙛𝙞𝙧𝙨𝙩 𝙖𝙣𝙙 𝙩𝙝𝙚𝙣 �𝙧𝙮 𝙖𝙜𝙖𝙞𝙣."
                 )
                 await query.edit_message_text(warning_message)
                 logger.info(f"User {user_id} still not in channel")
@@ -179,9 +191,40 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Unauthorized stats access attempt by {user_id}")
             return
         
+        # Calculate ping
+        start_time = time.time()
+        test_message = await update.message.reply_text("🏓 Pinging...")
+        ping_time = (time.time() - start_time) * 1000  # in milliseconds
+        
+        # Get user count
         user_count = users_collection.count_documents({})
-        await update.message.reply_text(f"📊 Total unique users: {user_count}")
+        
+        # Get bot uptime
+        uptime_seconds = time.time() - bot_start_time
+        uptime_str = format_uptime(uptime_seconds)
+        
+        # Get versions
+        python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+        
+        try:
+            mongo_version = db.command("buildInfo")["version"]
+        except Exception as e:
+            logger.error(f"Failed to get MongoDB version: {e}")
+            mongo_version = "Unknown"
+        
+        # Format stats message
+        stats_message = (
+            "📊 𝙎𝙩𝙖𝙩𝙨 𝙤𝙛 '𝐁𝐨𝐭 𝐍𝐚𝐦𝐞':\n\n"
+            f"🏓 𝙋𝙞𝙣𝙜 𝙋𝙤𝙣𝙜: {ping_time:.2f} ms\n"
+            f"👥 𝙏𝙤𝙩𝙖𝙡 𝙐𝙨𝙚𝙧𝙨: {user_count}\n"
+            f"⚙️ 𝘽𝙤𝙩 𝙐𝙥𝙩𝙞𝙢𝙚: {uptime_str}\n\n"
+            f"🎨 𝙋𝙮𝙩𝙝𝙤𝙣 �𝙚𝙧𝙨𝙞𝙤𝙣: {python_version}\n"
+            f"📑 𝙈𝙤𝙣𝙜𝙤 𝙑𝙚𝙧𝙨𝙞𝙤𝙣: {mongo_version}"
+        )
+        
+        await test_message.edit_text(stats_message)
         logger.info(f"Admin stats request: {user_count} users")
+        
     except Exception as e:
         logger.error(f"Stats command error: {e}")
 
