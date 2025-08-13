@@ -480,7 +480,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Create inline button for tutorial video
         tutorial_button = InlineKeyboardButton(
             "📺 Watch Tutorial Video", 
-            url="https://youtu.be/WeqpaV6VnO4?si=Y0pDondqe-nmIuht"
+            url="https://youtu.be/z_gpDOce8uw?si=GSnNayU8-relWSzi"
         )
         reply_markup = InlineKeyboardMarkup([[tutorial_button]])
         
