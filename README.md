@@ -1,35 +1,72 @@
-# Telegram Channel Verification Bot
+# Admin Assistant Bot 🤖
 
-This bot verifies if users are members of a Telegram channel before granting access to group links.
+A powerful Telegram assistant bot that forwards user messages to the admin, allows admin to reply, and provides tools for managing users (ban/unban, broadcast, statistics).  
+Built with **Python, Pyrogram, Flask, and MongoDB**. Deployable on **Render** or any VPS.
 
-## Features
-- Channel membership verification
-- Group link distribution
-- User statistics tracking
-- Admin-only statistics command
+---
 
-## Setup
+## 🚀 Features
+- 📩 **Message Forwarding** – User messages are automatically forwarded to the admin.
+- 🔁 **Admin Reply System** – Admin can reply to forwarded messages, and replies are sent back to the original user.
+- 📊 **Statistics Tracking** – Tracks total users, total messages, and banned users.
+- 🚫 **Ban/Unban System** – Ban abusive users directly from forwarded messages or using commands.
+- 📢 **Broadcast System** – Send messages, photos, videos, documents, or stickers to all users.
+- ⏳ **Auto-Reply** – Sends an automatic reply to users while waiting for admin response.
+- 🔨 **Inline Ban Button** – Admin receives forwarded messages with a ban button for quick action.
+- 🌐 **Flask Health Check** – A `/` endpoint for uptime monitoring and Render deployment compatibility.
+- ☁️ **Webhook Support** – Works with both polling (local) and webhook (Render/Heroku) modes.
 
-1. **Create a Telegram Bot**:
-   - Use @BotFather to create a new bot and get your `TELEGRAM_BOT_TOKEN`
+---
 
-2. **Set up MongoDB**:
-   - Create a free cluster at [MongoDB Atlas](https://www.mongodb.com/cloud/atlas)
-   - Get your connection string (`MONGODB_URI`)
+## 📜 Commands
 
-3. **Configure Environment Variables**:
-   - Copy `.env.example` to `.env`
-   - Fill in all required values:
-     - `TELEGRAM_BOT_TOKEN`: Your bot's API token
-     - `TELEGRAM_CHANNEL_ID`: Your channel ID (@username or numeric ID)
-     - `TELEGRAM_INVITE_LINK`: Your channel invite link
-     - `TELEGRAM_GROUP_LINK`: Your group invite link
-     - `MONGODB_URI`: MongoDB connection string
-     - `ADMIN_USER_ID`: Your Telegram user ID (get from @userinfobot)
+| Command        | Description |
+|----------------|-------------|
+| `/start`       | Register and welcome new users |
+| `/stats`       | Show bot statistics (admin only) |
+| `/ban <user_id>` | Ban a user by their Telegram ID (admin only) |
+| `/unban <user_id>` | Unban a user (admin only) |
+| `/broadcast`   | Broadcast a replied message to all users (admin only) |
 
-## Local Development
+> ⚠️ **Note:** `/ban`, `/unban`, `/stats`, and `/broadcast` are **admin-only commands**.
 
-1. Create virtual environment:
+---
+
+## ⚙️ Environment Variables
+
+You need to set the following environment variables for the bot to work:
+
+| Variable              | Description |
+|-----------------------|-------------|
+| `BOT_TOKEN`           | Telegram bot token from [BotFather](https://t.me/BotFather) |
+| `ADMIN_ID`            | Your Telegram user ID (admin) |
+| `MONGODB_URI`         | MongoDB connection string |
+| `PORT`                | Port for Flask (default: `5000`) |
+| `RENDER`              | Set to `true` when deploying on Render |
+| `RENDER_EXTERNAL_URL` | Render app external URL (e.g., `https://your-app.onrender.com`) |
+
+---
+
+## 🛠️ Deployment
+
+### Local (Polling)
+1. Clone the repo and install dependencies:
    ```bash
-   python -m venv venv
-   source venv/bin/activate
+   pip install -r requirements.txt
+   ```
+2. Set environment variables in `.env` or shell.
+3. Run the bot:
+   ```bash
+   python main.py
+   ```
+
+### Render (Webhook)
+1. Push your project to GitHub.
+2. Create a new **Web Service** on Render.
+3. Add environment variables in the **Render Dashboard**.
+4. Deploy – The bot will run automatically with webhook mode.
+
+---
+
+## 🧾 License
+This project is for personal use. Modify and use as per your needs.
