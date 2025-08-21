@@ -331,7 +331,7 @@ async def lecture_command_handler(update: Update, context: ContextTypes.DEFAULT_
                 # Create inline buttons for group link and tutorial
                 keyboard = [
                     [InlineKeyboardButton(f"👉 Join {command.capitalize()} Group 👈", url=cmd_data["link"])],
-                    [InlineKeyboardButton("📺 Watch Tutorial Video", url="https://youtu.be/z_gpDOce8uw?si=GSnNayU8-relWSzi")]
+                    [InlineKeyboardButton("📺 Watch Tutorial Video", url="https://youtube.com/shorts/UhccqnGY3PY?si=1aswpXBhcFP8L8tM")]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
