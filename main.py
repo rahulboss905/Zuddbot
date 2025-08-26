@@ -120,7 +120,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "╰───❖━❀🌟❀━❖───╯\n\n"
                     "🙏 𝗧𝗵𝗮𝗻𝗸 𝘆𝗼𝘂 𝗳𝗼𝗿 𝘀𝘂𝗯𝘀𝗰𝗿𝗶𝗯𝗶𝗻𝗴 𝘁𝗼 𝗼𝘂𝗿 𝗰𝗵𝗮𝗻𝗻𝗲𝗹!\n"
                     "🎯 𝗪𝗲'𝗿𝗲 𝗴𝗹𝗮𝗱 𝘁𝗼 𝗵𝗮𝘃𝗲 𝘆𝗼𝘂 𝗵𝗲𝗿𝗲.\n\n"
-                    "➡️ 𝗨𝘀𝗲 𝘁𝗵𝗲𝘀𝗲 𝗰𝗼𝗺𝗮𝗻𝗱𝘀:\n\n"
+                    "➡️ 𝗨𝘀𝗲 𝘁𝗵𝗲𝘀𝗲 𝗰𝗼𝗺𝗺𝗮𝗻𝗱𝘀:\n\n"
                     "📚 `/lecture` - Show all available lecture groups\n"
                     "❓ `/help` - Get help with bot commands"
                 )
@@ -324,7 +324,7 @@ async def remove_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ Command /{command_name} has been removed.")
             logger.info(f"Removed lecture command: /{command_name}")
         else:
-            await update.message.reply_text(f"❌ Command /极速赛车群} not found.")
+            await update.message.reply_text(f"❌ Command /{command_name} not found.")
             logger.info(f"Attempted to remove non-existent command: /{command_name}")
         
     except Exception as e:
@@ -367,12 +367,12 @@ async def lecture_command_handler(update: Update, context: ContextTypes.DEFAULT_
                 logger.info(f"Sent lecture group link to user {user_id} for /{command}")
             else:
                 await send_verification_request(update, context)
-                logger.info(f"Sent verification request to user极速赛车群}")
+                logger.info(f"Sent verification request to user {user_id}")
         except Exception as e:
             logger.error(f"Lecture command membership check error: {e}")
             await send_verification_request(update, context)
     except Exception as e:
-        logger.error极速赛车群}")
+        logger.error(f"Lecture command handler error: {e}")
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -389,10 +389,11 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         test_message = await update.message.reply_text("🏓 Pinging...")
         ping_time = (time.time() - start_time) * 1000  # in milliseconds
         
-极速赛车群} user_count = users_collection.count_documents({})
+        # Get user count
+        user_count = users_collection.count_documents({})
         
         # Get lecture command count
-        command_count = custom_commands极速赛车群}
+        command_count = custom_commands_collection.count_documents({})
         
         # Get bot uptime
         uptime_seconds = time.time() - bot_start_time
@@ -413,7 +414,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🏓 Ping: {ping_time:.2f} ms\n"
             f"👥 Total Users: {user_count}\n"
             f"📚 Lecture Groups: {command_count}\n"
-            f"⏱️ Uptime: {uptime_str}\极速赛车群}"
+            f"⏱️ Uptime: {uptime_str}\n\n"
             f"🐍 Python: {python_version}\n"
             f"🍃 MongoDB: {mongo_version}"
         )
@@ -434,8 +435,10 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Unauthorized broadcast attempt by {user_id}")
             return
         
-        # Check if the message is a reply to another message
-        if not update.message.reply_to_message and not context.args:
+        # Check if message is a reply
+        replied_message = update.message.reply_to_message
+        
+        if not replied_message and not context.args:
             await update.message.reply_text(
                 "⚠️ Please provide a message to broadcast or reply to a message.\n"
                 "Usage: /broadcast <your message> OR reply to a message with /broadcast"
@@ -452,33 +455,108 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❌ Failed: {failed_count}"
         )
         
-        # Get the message to broadcast
-        if update.message.reply_to_message:
-            # Broadcast the replied message with all its content
-            replied_message = update.message.reply_to_message
-            broadcast_content = replied_message
-            is_reply = True
-        else:
-            # Broadcast text from command arguments
-            broadcast_content = ' '.join(context.args)
-            is_reply = False
+        # Function to send message to a user
+        async def send_to_user(user_id, send_func, *args, **kwargs):
+            try:
+                await send_func(chat_id=user_id, *args, **kwargs)
+                return True
+            except Exception as e:
+                logger.error(f"Failed to send to user {user_id}: {e}")
+                return False
         
         for user in users_collection.find():
             try:
-                if is_reply:
-                    # Forward the replied message with all its media/content
-                    await broadcast_content.forward(
-                        chat_id=user['user_id'],
-                        protect_content=True
-                    )
+                if replied_message:
+                    # Forward the replied message as-is
+                    if replied_message.text:
+                        success = await send_to_user(
+                            user['user_id'], 
+                            context.bot.send_message,
+                            text=replied_message.text,
+                            entities=replied_message.entities,
+                            parse_mode=None,
+                            protect_content=True
+                        )
+                    elif replied_message.photo:
+                        success = await send_to_user(
+                            user['user_id'],
+                            context.bot.send_photo,
+                            photo=replied_message.photo[-1].file_id,
+                            caption=replied_message.caption,
+                            caption_entities=replied_message.caption_entities,
+                            parse_mode=None,
+                            protect_content=True
+                        )
+                    elif replied_message.video:
+                        success = await send_to_user(
+                            user['user_id'],
+                            context.bot.send_video,
+                            video=replied_message.video.file_id,
+                            caption=replied_message.caption,
+                            caption_entities=replied_message.caption_entities,
+                            parse_mode=None,
+                            protect_content=True
+                        )
+                    elif replied_message.document:
+                        success = await send_to_user(
+                            user['user_id'],
+                            context.bot.send_document,
+                            document=replied_message.document.file_id,
+                            caption=replied_message.caption,
+                            caption_entities=replied_message.caption_entities,
+                            parse_mode=None,
+                            protect_content=True
+                        )
+                    elif replied_message.audio:
+                        success = await send_to_user(
+                            user['user_id'],
+                            context.bot.send_audio,
+                            audio=replied_message.audio.file_id,
+                            caption=replied_message.caption,
+                            caption_entities=replied_message.caption_entities,
+                            parse_mode=None,
+                            protect_content=True
+                        )
+                    elif replied_message.voice:
+                        success = await send_to_user(
+                            user['user_id'],
+                            context.bot.send_voice,
+                            voice=replied_message.voice.file_id,
+                            caption=replied_message.caption,
+                            caption_entities=replied_message.caption_entities,
+                            parse_mode=None,
+                            protect_content=True
+                        )
+                    elif replied_message.sticker:
+                        success = await send_to_user(
+                            user['user_id'],
+                            context.bot.send_sticker,
+                            sticker=replied_message.sticker.file_id,
+                            protect_content=True
+                        )
+                    else:
+                        # Fallback: forward the message
+                        await context.bot.forward_message(
+                            chat_id=user['user_id'],
+                            from_chat_id=replied_message.chat_id,
+                            message_id=replied_message.message_id,
+                            protect_content=True
+                        )
+                        success = True
                 else:
-                    # Send text message
-                    await context.bot.send_message(
-                        chat_id=user['user_id'],
-                        text=broadcast_content,
+                    # Send text message from command arguments
+                    message = ' '.join(context.args)
+                    success = await send_to_user(
+                        user['user_id'],
+                        context.bot.send_message,
+                        text=message,
                         protect_content=True
                     )
-                success_count += 1
+                
+                if success:
+                    success_count += 1
+                else:
+                    failed_count += 1
                 
                 # Update progress every 10 sends
                 if (success_count + failed_count) % 10 == 0:
@@ -490,6 +568,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
                 # Small delay to avoid rate limiting
                 time.sleep(0.1)
+                    
             except Exception as e:
                 failed_count += 1
                 logger.error(f"Failed to send to user {user['user_id']}: {e}")
@@ -528,7 +607,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_commands = [
                 "\n\n👑 Admin Commands:",
                 "/addlecture <name> <link> <description> - Add new lecture group",
-                "/removelecture <name极速赛车群} - Remove a lecture group",
+                "/removelecture <name> - Remove a lecture group",
                 "/stats - View bot statistics",
                 "/broadcast <message> - Send message to all users (or reply to a message)"
             ]
