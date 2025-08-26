@@ -46,15 +46,14 @@ def format_uptime(seconds):
 # Load environment variables
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
-INVITE_LINK = os.getenv("TELEGRAM_INVITE_LINK")
-GROUP_LINK = os.getenv("TELEGRAM_GROUP_LINK")
 MONGODB_URI = os.getenv("MONGODB_URI")
 ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")
+TUTORIAL_VIDEO_LINK = os.getenv("TUTORIAL_VIDEO_LINK", "https://youtube.com/shorts/UhccqnGY3PY?si=1aswpXBhcFP8L8tM")
 
 # Verify environment variables
-if not all([TOKEN, CHANNEL_ID, INVITE_LINK, GROUP_LINK, MONGODB_URI, ADMIN_USER_ID]):
+if not all([TOKEN, CHANNEL_ID, MONGODB_URI, ADMIN_USER_ID]):
     logger.error("Missing required environment variables!")
-    missing = [var for var in ["TOKEN", "CHANNEL_ID", "INVITE_LINK", "GROUP_LINK", "MONGODB_URI", "ADMIN_USER_ID"] 
+    missing = [var for var in ["TOKEN", "CHANNEL_ID", "MONGODB_URI", "ADMIN_USER_ID"] 
                if not os.getenv(var)]
     logger.error(f"Missing variables: {', '.join(missing)}")
     exit(1)
@@ -75,6 +74,22 @@ except Exception as e:
 
 async def is_owner(user_id: int) -> bool:
     return str(user_id) == ADMIN_USER_ID
+
+async def generate_invite_link(context: ContextTypes.DEFAULT_TYPE) -> str:
+    """Generate a temporary invite link that expires in 5 minutes"""
+    try:
+        # Create an invite link that expires in 5 minutes
+        expire_date = int(time.time()) + 300  # 5 minutes from now
+        invite_link = await context.bot.create_chat_invite_link(
+            chat_id=CHANNEL_ID,
+            expire_date=expire_date,
+            member_limit=1  # Single use link
+        )
+        return invite_link.invite_link
+    except Exception as e:
+        logger.error(f"Failed to generate invite link: {e}")
+        # Fallback to a basic link if generation fails
+        return f"https://t.me/{CHANNEL_ID}"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -124,8 +139,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Start command error: {e}")
 
 async def send_verification_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Generate a new temporary invite link
+    invite_link = await generate_invite_link(context)
+    
     keyboard = [
-        [InlineKeyboardButton("✅ Join Channel", url=INVITE_LINK)],
+        [InlineKeyboardButton("✅ Join Channel", url=invite_link)],
         [InlineKeyboardButton("🔄 I've Joined", callback_data="check_membership")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -137,7 +155,8 @@ async def send_verification_request(update: Update, context: ContextTypes.DEFAUL
         "— 🎁 Free Resources\n"  
         "— 📚 Daily Quiz & Guidance\n"  
         "— ❗ Exclusive Content\n\n"
-        "✅ After Joining, tap \"I've Joined\" below to continue!"
+        "✅ After Joining, tap \"I've Joined\" below to continue!\n\n"
+        "🔒 This invite link expires in 5 minutes"
     )
     
     await update.message.reply_text(
@@ -331,7 +350,7 @@ async def lecture_command_handler(update: Update, context: ContextTypes.DEFAULT_
                 # Create inline buttons for group link and tutorial
                 keyboard = [
                     [InlineKeyboardButton(f"👉 Join {command.capitalize()} Group 👈", url=cmd_data["link"])],
-                    [InlineKeyboardButton("📺 Watch Tutorial Video", url="https://youtube.com/shorts/UhccqnGY3PY?si=1aswpXBhcFP8L8tM")]
+                    [InlineKeyboardButton("📺 Watch Tutorial Video", url=TUTORIAL_VIDEO_LINK)]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
@@ -480,7 +499,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Create inline button for tutorial video
         tutorial_button = InlineKeyboardButton(
             "📺 Watch Tutorial Video", 
-            url="https://youtu.be/z_gpDOce8uw?si=GSnNayU8-relWSzi"
+            url=TUTORIAL_VIDEO_LINK
         )
         reply_markup = InlineKeyboardMarkup([[tutorial_button]])
         
