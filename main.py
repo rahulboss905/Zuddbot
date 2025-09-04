@@ -93,31 +93,53 @@ async def generate_invite_link(context: ContextTypes.DEFAULT_TYPE, chat_id: str)
     except Exception as e:
         logger.error(f"Failed to generate invite link for {chat_id}: {e}")
         # Fallback to a basic link if generation fails
-        return f"https://t.me/{chat_id}"
+        if chat_id.startswith('@'):
+            return f"https://t.me/{chat_id[1:]}"
+        elif chat_id.startswith('-'):
+            # For group IDs, we can't create a public link, so use the bot's invite
+            return f"https://t.me/{context.bot.username}?startgroup=true"
+        else:
+            return f"https://t.me/{chat_id}"
 
 async def check_membership(user_id: int, context: ContextTypes.DEFAULT_TYPE, chat_id: str) -> bool:
-    """Check if user is a member of a specific chat"""
-    try:
-        # Try different approaches to check membership
+    """Check if user is a member of a specific chat with improved error handling"""
+    max_retries = 3
+    for attempt in range(max_retries):
         try:
-            # First try the standard method
-            member = await context.bot.get_chat_member(chat_id=chat_id, user_id=user_id)
-            return member.status in ['member', 'administrator', 'creator']
-        except Exception as e:
-            logger.warning(f"Standard membership check failed for {chat_id}: {e}")
-            
-            # Try alternative method for groups
+            # Try different approaches to check membership
             try:
-                # Get chat information first
-                chat = await context.bot.get_chat(chat_id)
-                member = await context.bot.get_chat_member(chat_id=chat.id, user_id=user_id)
-                return member.status in ['member', 'administrator', 'creator']
-            except Exception as e2:
-                logger.error(f"Alternative membership check also failed for {chat_id}: {e2}")
+                # First try the standard method
+                member = await context.bot.get_chat_member(chat_id=chat_id, user_id=user_id)
+                status = member.status
+                logger.info(f"Membership check for user {user_id} in {chat_id}: {status} (attempt {attempt+1})")
+                return status in ['member', 'administrator', 'creator', 'restricted']
+            except Exception as e:
+                logger.warning(f"Standard membership check failed for {chat_id}: {e}")
+                
+                # Try alternative method for groups
+                try:
+                    # Get chat information first
+                    chat = await context.bot.get_chat(chat_id)
+                    member = await context.bot.get_chat_member(chat_id=chat.id, user_id=user_id)
+                    status = member.status
+                    logger.info(f"Alternative membership check for user {user_id} in {chat_id}: {status} (attempt {attempt+1})")
+                    return status in ['member', 'administrator', 'creator', 'restricted']
+                except Exception as e2:
+                    logger.error(f"Alternative membership check also failed for {chat_id}: {e2}")
+                    
+                    # If this is the last attempt, return False
+                    if attempt == max_retries - 1:
+                        return False
+                    
+                    # Wait before retrying
+                    time.sleep(1)
+        except Exception as e:
+            logger.error(f"Membership check error for {chat_id}: {e}")
+            if attempt == max_retries - 1:
                 return False
-    except Exception as e:
-        logger.error(f"Membership check error for {chat_id}: {e}")
-        return False
+            time.sleep(1)
+    
+    return False
 
 async def check_all_memberships(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Check if user is a member of all required chats"""
@@ -231,7 +253,9 @@ async def send_verification_request(update: Update, context: ContextTypes.DEFAUL
             "— 📚 Daily Quiz & Guidance\n"  
             "— ❗ Exclusive Content\n\n"
             "✅ After Joining, tap \"I've Joined\" below to continue!\n\n"
-            "🔒 Invite links expire in 5 minutes"
+            "🔒 Invite links expire in 5 minutes\n\n"
+            "ℹ️ If you've already joined, please wait a moment and try again. "
+            "Sometimes it takes a few seconds for the system to update."
         )
     elif CHANNEL_ID:
         join_message = (
@@ -242,7 +266,9 @@ async def send_verification_request(update: Update, context: ContextTypes.DEFAUL
             "— 📚 Daily Quiz & Guidance\n"  
             "— ❗ Exclusive Content\n\n"
             "✅ After Joining, tap \"I've Joined\" below to continue!\n\n"
-            "🔒 Invite link expires in 5 minutes"
+            "🔒 Invite link expires in 5 minutes\n\n"
+            "ℹ️ If you've already joined, please wait a moment and try again. "
+            "Sometimes it takes a few seconds for the system to update."
         )
     else:  # Only group
         join_message = (
@@ -253,7 +279,9 @@ async def send_verification_request(update: Update, context: ContextTypes.DEFAUL
             "— 📚 Daily Quiz & Guidance\n"  
             "— ❗ Exclusive Content\n\n"
             "✅ After Joining, tap \"I've Joined\" below to continue!\n\n"
-            "🔒 Invite link expires in 5 minutes"
+            "🔒 Invite link expires in 5 minutes\n\n"
+            "ℹ️ If you've already joined, please wait a moment and try again. "
+            "Sometimes it takes a few seconds for the system to update."
         )
     
     await update.message.reply_text(
@@ -292,12 +320,26 @@ async def check_membership_callback(update: Update, context: ContextTypes.DEFAUL
                 if not group_member:
                     missing_chats.append("group")
             
-            warning_message = (
-                f"❌ You're still not in the {', '.join(missing_chats)}!\n\n"
-                "Please join all required chats first and then try again."
-            )
-            await query.edit_message_text(warning_message)
-            logger.info(f"User {user_id} still not in: {', '.join(missing_chats)}")
+            # Create a more helpful error message
+            if missing_chats:
+                error_message = (
+                    f"❌ We couldn't verify your membership in the {', '.join(missing_chats)}!\n\n"
+                    "This could be because:\n"
+                    "1. You haven't joined yet\n"
+                    "2. You just joined and the system needs time to update\n"
+                    "3. There's a temporary issue with verification\n\n"
+                    "Please make sure you've joined and wait a moment before trying again.\n\n"
+                    "If the problem persists, please contact support."
+                )
+            else:
+                error_message = (
+                    "❌ We couldn't verify your membership!\n\n"
+                    "Please make sure you've joined all required chats and wait a moment before trying again.\n\n"
+                    "If the problem persists, please contact support."
+                )
+                
+            await query.edit_message_text(error_message)
+            logger.info(f"User {user_id} still not in: {', '.join(missing_chats) if missing_chats else 'unknown'}")
     except Exception as e:
         logger.error(f"Callback handler error: {e}")
         await query.edit_message_text("⚠️ Error verifying membership. Please try again.")
@@ -426,7 +468,7 @@ async def remove_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ Command /{command_name} has been removed.")
             logger.info(f"Removed lecture command: /{command_name}")
         else:
-            await update.message.reply_text(f"❌ Command /{channel_invite} not found.")
+            await update.message.reply_text(f"❌ Command /{command_name} not found.")
             logger.info(f"Attempted to remove non-existent command: /{command_name}")
         
     except Exception as e:
@@ -512,11 +554,11 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Get verification requirements
         verification_status = "No verification required"
         if CHANNEL_ID and GROUP_ID:
-            verification_status = "Requires both channel and group"
+            verification_status = f"Requires both channel ({CHANNEL_ID}) and group ({GROUP_ID})"
         elif CHANNEL_ID:
-            verification_status = "Requires channel only"
+            verification_status = f"Requires channel only ({CHANNEL_ID})"
         elif GROUP_ID:
-            verification_status = "Requires group only"
+            verification_status = f"Requires group only ({GROUP_ID})"
         
         # Format stats message
         stats_message = (
