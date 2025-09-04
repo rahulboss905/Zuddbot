@@ -112,6 +112,8 @@ async def check_membership(user_id: int, context: ContextTypes.DEFAULT_TYPE, cha
                 member = await context.bot.get_chat_member(chat_id=chat_id, user_id=user_id)
                 status = member.status
                 logger.info(f"Membership check for user {user_id} in {chat_id}: {status} (attempt {attempt+1})")
+                
+                # Check all possible member statuses :cite[4]:cite[9]
                 return status in ['member', 'administrator', 'creator', 'restricted']
             except Exception as e:
                 logger.warning(f"Standard membership check failed for {chat_id}: {e}")
@@ -159,6 +161,24 @@ async def check_all_memberships(user_id: int, context: ContextTypes.DEFAULT_TYPE
         logger.info(f"User {user_id} group membership: {group_member}")
     
     return all(results)
+
+# Add restricted decorator to limit bot access :cite[1]:cite[7]
+def restricted(func):
+    from functools import wraps
+    
+    @wraps(func)
+    async def wrapped(update, context, *args, **kwargs):
+        user_id = update.effective_user.id
+        
+        # Check if user is member of required groups/channels
+        is_member = await check_all_memberships(user_id, context)
+        if not is_member and REQUIRES_VERIFICATION:
+            logger.warning(f"Unauthorized access attempt by user {user_id}")
+            await send_verification_request(update, context)
+            return
+        
+        return await func(update, context, *args, **kwargs)
+    return wrapped
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -345,18 +365,11 @@ async def check_membership_callback(update: Update, context: ContextTypes.DEFAUL
         await query.edit_message_text("⚠️ Error verifying membership. Please try again.")
 
 # Unified lecture command to list all custom commands with descriptions
+@restricted  # Add restricted decorator :cite[1]:cite[7]
 async def lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
         logger.info(f"Lecture command from user: {user_id}")
-        
-        # Check if verification is required and user is member
-        if REQUIRES_VERIFICATION:
-            is_member = await check_all_memberships(user_id, context)
-            if not is_member:
-                await send_verification_request(update, context)
-                logger.info(f"Sent verification request to user {user_id}")
-                return
         
         # Get all custom commands
         commands = list(custom_commands_collection.find({}))
@@ -385,6 +398,7 @@ async def lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Lecture command error: {e}")
 
 # Admin command to add new lecture group command with description
+@restricted  # Add restricted decorator :cite[1]:cite[7]
 async def add_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -441,6 +455,7 @@ async def add_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Failed to add lecture command. Please try again.")
 
 # Admin command to remove lecture command
+@restricted  # Add restricted decorator :cite[1]:cite[7]
 async def remove_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -476,6 +491,7 @@ async def remove_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Failed to remove lecture command. Please try again.")
 
 # Handler for custom lecture commands - UPDATED WITH TUTORIAL VIDEO
+@restricted  # Add restricted decorator :cite[1]:cite[7]
 async def lecture_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -487,14 +503,6 @@ async def lecture_command_handler(update: Update, context: ContextTypes.DEFAULT_
         cmd_data = custom_commands_collection.find_one({"command": command})
         if not cmd_data:
             return  # Not a lecture command
-        
-        # Check if verification is required and user is member
-        if REQUIRES_VERIFICATION:
-            is_member = await check_all_memberships(user_id, context)
-            if not is_member:
-                await send_verification_request(update, context)
-                logger.info(f"Sent verification request to user {user_id}")
-                return
         
         # Create inline buttons for group link and tutorial
         keyboard = [
@@ -517,6 +525,7 @@ async def lecture_command_handler(update: Update, context: ContextTypes.DEFAULT_
     except Exception as e:
         logger.error(f"Lecture command handler error: {e}")
 
+@restricted  # Add restricted decorator :cite[1]:cite[7]
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -578,6 +587,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Stats command error: {e}")
 
+@restricted  # Add restricted decorator :cite[1]:cite[7]
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -740,6 +750,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Broadcast command error: {e}")
         await update.message.reply_text("⚠️ An error occurred during broadcast.")
 
+@restricted  # Add restricted decorator :cite[1]:cite[7]
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
