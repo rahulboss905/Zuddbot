@@ -92,7 +92,7 @@ async def generate_invite_link(context: ContextTypes.DEFAULT_TYPE) -> str:
         return f"https://t.me/{CHANNEL_ID}"
 
 async def check_membership(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Check if user is a member of the channel/group"""
+    """Check if user is a member of the channel/group with improved error handling"""
     try:
         # Try different approaches to check membership
         try:
@@ -483,7 +483,8 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             text=replied_message.text,
                             entities=replied_message.entities,
                             parse_mode=None,
-                            protect_content=True
+                            protect_content=True,
+                            disable_web_page_preview=True  # Disable link preview
                         )
                     elif replied_message.photo:
                         success = await send_to_user(
@@ -558,7 +559,8 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         user['user_id'],
                         context.bot.send_message,
                         text=message,
-                        protect_content=True
+                        protect_content=True,
+                        disable_web_page_preview=True  # Disable link preview
                     )
                 
                 if success:
