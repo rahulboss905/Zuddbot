@@ -45,18 +45,22 @@ def format_uptime(seconds):
 
 # Load environment variables
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
+CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID", "").strip()
+GROUP_ID = os.getenv("TELEGRAM_GROUP_ID", "").strip()
 MONGODB_URI = os.getenv("MONGODB_URI")
 ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")
 TUTORIAL_VIDEO_LINK = os.getenv("TUTORIAL_VIDEO_LINK", "https://youtube.com/shorts/UhccqnGY3PY?si=1aswpXBhcFP8L8tM")
 
-# Verify environment variables
-if not all([TOKEN, CHANNEL_ID, MONGODB_URI, ADMIN_USER_ID]):
+# Verify required environment variables
+if not all([TOKEN, MONGODB_URI, ADMIN_USER_ID]):
     logger.error("Missing required environment variables!")
-    missing = [var for var in ["TOKEN", "CHANNEL_ID", "MONGODB_URI", "ADMIN_USER_ID"] 
+    missing = [var for var in ["TOKEN", "MONGODB_URI", "ADMIN_USER_ID"] 
                if not os.getenv(var)]
     logger.error(f"Missing variables: {', '.join(missing)}")
     exit(1)
+
+# Check if any verification is required
+REQUIRES_VERIFICATION = bool(CHANNEL_ID or GROUP_ID)
 
 # MongoDB setup
 try:
@@ -75,45 +79,64 @@ except Exception as e:
 async def is_owner(user_id: int) -> bool:
     return str(user_id) == ADMIN_USER_ID
 
-async def generate_invite_link(context: ContextTypes.DEFAULT_TYPE) -> str:
+async def generate_invite_link(context: ContextTypes.DEFAULT_TYPE, chat_id: str) -> str:
     """Generate a temporary invite link that expires in 5 minutes"""
     try:
         # Create an invite link that expires in 5 minutes
         expire_date = int(time.time()) + 300  # 5 minutes from now
         invite_link = await context.bot.create_chat_invite_link(
-            chat_id=CHANNEL_ID,
+            chat_id=chat_id,
             expire_date=expire_date,
             member_limit=1  # Single use link
         )
         return invite_link.invite_link
     except Exception as e:
-        logger.error(f"Failed to generate invite link: {e}")
+        logger.error(f"Failed to generate invite link for {chat_id}: {e}")
         # Fallback to a basic link if generation fails
-        return f"https://t.me/{CHANNEL_ID}"
+        return f"https://t.me/{chat_id}"
 
-async def check_membership(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Check if user is a member of the channel/group with improved error handling"""
+async def check_membership(user_id: int, context: ContextTypes.DEFAULT_TYPE, chat_id: str) -> bool:
+    """Check if user is a member of a specific chat"""
     try:
         # Try different approaches to check membership
         try:
             # First try the standard method
-            member = await context.bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+            member = await context.bot.get_chat_member(chat_id=chat_id, user_id=user_id)
             return member.status in ['member', 'administrator', 'creator']
         except Exception as e:
-            logger.warning(f"Standard membership check failed: {e}")
+            logger.warning(f"Standard membership check failed for {chat_id}: {e}")
             
             # Try alternative method for groups
             try:
                 # Get chat information first
-                chat = await context.bot.get_chat(CHANNEL_ID)
+                chat = await context.bot.get_chat(chat_id)
                 member = await context.bot.get_chat_member(chat_id=chat.id, user_id=user_id)
                 return member.status in ['member', 'administrator', 'creator']
             except Exception as e2:
-                logger.error(f"Alternative membership check also failed: {e2}")
+                logger.error(f"Alternative membership check also failed for {chat_id}: {e2}")
                 return False
     except Exception as e:
-        logger.error(f"Membership check error: {e}")
+        logger.error(f"Membership check error for {chat_id}: {e}")
         return False
+
+async def check_all_memberships(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Check if user is a member of all required chats"""
+    if not REQUIRES_VERIFICATION:
+        return True
+        
+    results = []
+    
+    if CHANNEL_ID:
+        channel_member = await check_membership(user_id, context, CHANNEL_ID)
+        results.append(channel_member)
+        logger.info(f"User {user_id} channel membership: {channel_member}")
+    
+    if GROUP_ID:
+        group_member = await check_membership(user_id, context, GROUP_ID)
+        results.append(group_member)
+        logger.info(f"User {user_id} group membership: {group_member}")
+    
+    return all(results)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -134,14 +157,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })
             logger.info(f"Added new user to DB: {user_id}")
         
-        # Check channel membership using our improved function
-        is_member = await check_membership(user_id, context)
-        if is_member:
+        # Check if verification is required
+        if not REQUIRES_VERIFICATION:
             welcome_message = (
                 "╭───❖━❀🌟❀━❖───╮\n"
                 f"  𝗪𝗲𝗹𝗰𝗼𝗺𝗲, {first_name}! 🎉\n"
                 "╰───❖━❀🌟❀━❖───╯\n\n"
-                "🙏 𝗧𝗵𝗮𝗻𝗸 𝘆𝗼𝘂 𝗳𝗼𝗿 𝘀𝘂𝗯𝘀𝗰𝗿𝗶𝗯𝗶𝗻𝗴 𝘁𝗼 𝗼𝘂𝗿 𝗰𝗵𝗮𝗻𝗻𝗲𝗹!\n"
                 "🎯 𝗪𝗲'𝗿𝗲 𝗴𝗹𝗮𝗱 𝘁𝗼 𝗵𝗮𝘃𝗲 𝘆𝗼𝘂 𝗵𝗲𝗿𝗲.\n\n"
                 "➡️ 𝗨𝘀𝗲 𝘁𝗵𝗲𝘀𝗲 𝗰𝗼𝗺𝗺𝗮𝗻𝗱𝘀:\n\n"
                 "📚 `/lecture` - Show all available lecture groups\n"
@@ -151,7 +172,27 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 welcome_message,
                 protect_content=True
             )
-            logger.info(f"User {user_id} is verified")
+            logger.info(f"User {user_id} started bot (no verification required)")
+            return
+        
+        # Check membership in all required chats
+        is_member = await check_all_memberships(user_id, context)
+        if is_member:
+            welcome_message = (
+                "╭───❖━❀🌟❀━❖───╮\n"
+                f"  𝗪𝗲𝗹𝗰𝗼𝗺𝗲, {first_name}! 🎉\n"
+                "╰───❖━❀🌟❀━❖───╯\n\n"
+                "🙏 𝗧𝗵𝗮𝗻𝗸 𝘆𝗼𝘂 𝗳𝗼𝗿 𝘀𝘂𝗯𝘀𝗰𝗿𝗶𝗯𝗶𝗻𝗴 𝘁𝗼 𝗼𝘂𝗿 𝗰𝗼𝗺𝗺𝘂𝗻𝗶𝘁𝘆!\n"
+                "🎯 𝗪𝗲'𝗿𝗲 𝗴𝗹𝗮𝗱 𝘁𝗼 𝗵𝗮𝘃𝗲 𝘆𝗼𝘂 𝗵𝗲𝗿𝗲.\n\n"
+                "➡️ 𝗨𝘀𝗲 𝘁𝗵𝗲𝘀𝗲 𝗰𝗼𝗺𝗺𝗮𝗻𝗱𝘀:\n\n"
+                "📚 `/lecture` - Show all available lecture groups\n"
+                "❓ `/help` - Get help with bot commands"
+            )
+            await update.message.reply_text(
+                welcome_message,
+                protect_content=True
+            )
+            logger.info(f"User {user_id} is verified in all required chats")
         else:
             await send_verification_request(update, context)
             logger.info(f"User {user_id} needs verification")
@@ -159,25 +200,61 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Start command error: {e}")
 
 async def send_verification_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Generate a new temporary invite link
-    invite_link = await generate_invite_link(context)
+    if not REQUIRES_VERIFICATION:
+        return
+        
+    keyboard = []
+    chat_count = 0
     
-    keyboard = [
-        [InlineKeyboardButton("✅ Join Channel", url=invite_link)],
-        [InlineKeyboardButton("🔄 I've Joined", callback_data="check_membership")]
-    ]
+    if CHANNEL_ID:
+        channel_invite = await generate_invite_link(context, CHANNEL_ID)
+        keyboard.append([InlineKeyboardButton("✅ Join Channel", url=channel_invite)])
+        chat_count += 1
+    
+    if GROUP_ID:
+        group_invite = await generate_invite_link(context, GROUP_ID)
+        keyboard.append([InlineKeyboardButton("✅ Join Group", url=group_invite)])
+        chat_count += 1
+    
+    # Add verification button
+    keyboard.append([InlineKeyboardButton("🔄 I've Joined", callback_data="check_membership")])
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    join_message = (
-        "⚠️ Please Join Our Channel to Use This Bot!\n\n"
-        "📢 Our channel provides:\n"
-        "— 📝 Important Updates\n"  
-        "— 🎁 Free Resources\n"  
-        "— 📚 Daily Quiz & Guidance\n"  
-        "— ❗ Exclusive Content\n\n"
-        "✅ After Joining, tap \"I've Joined\" below to continue!\n\n"
-        "🔒 This invite link expires in 5 minutes"
-    )
+    # Create appropriate message based on what needs to be joined
+    if CHANNEL_ID and GROUP_ID:
+        join_message = (
+            "⚠️ Please Join Our Channel and Group to Use This Bot!\n\n"
+            "📢 Our community provides:\n"
+            "— 📝 Important Updates\n"  
+            "— 🎁 Free Resources\n"  
+            "— 📚 Daily Quiz & Guidance\n"  
+            "— ❗ Exclusive Content\n\n"
+            "✅ After Joining, tap \"I've Joined\" below to continue!\n\n"
+            "🔒 Invite links expire in 5 minutes"
+        )
+    elif CHANNEL_ID:
+        join_message = (
+            "⚠️ Please Join Our Channel to Use This Bot!\n\n"
+            "📢 Our channel provides:\n"
+            "— 📝 Important Updates\n"  
+            "— 🎁 Free Resources\n"  
+            "— 📚 Daily Quiz & Guidance\n"  
+            "— ❗ Exclusive Content\n\n"
+            "✅ After Joining, tap \"I've Joined\" below to continue!\n\n"
+            "🔒 Invite link expires in 5 minutes"
+        )
+    else:  # Only group
+        join_message = (
+            "⚠️ Please Join Our Group to Use This Bot!\n\n"
+            "📢 Our group provides:\n"
+            "— 📝 Important Updates\n"  
+            "— 🎁 Free Resources\n"  
+            "— 📚 Daily Quiz & Guidance\n"  
+            "— ❗ Exclusive Content\n\n"
+            "✅ After Joining, tap \"I've Joined\" below to continue!\n\n"
+            "🔒 Invite link expires in 5 minutes"
+        )
     
     await update.message.reply_text(
         join_message,
@@ -193,21 +270,34 @@ async def check_membership_callback(update: Update, context: ContextTypes.DEFAUL
         
         logger.info(f"Membership check callback from user: {user_id}")
         
-        # Check membership using our improved function
-        is_member = await check_membership(user_id, context)
+        # Check membership in all required chats
+        is_member = await check_all_memberships(user_id, context)
         if is_member:
             await query.edit_message_text(
                 "✅ Verification successful!\n"
                 "Use /lecture to see all available groups or /help for assistance."
             )
-            logger.info(f"User {user_id} verified successfully")
+            logger.info(f"User {user_id} verified successfully in all required chats")
         else:
+            # Find out which chats the user is missing
+            missing_chats = []
+            
+            if CHANNEL_ID:
+                channel_member = await check_membership(user_id, context, CHANNEL_ID)
+                if not channel_member:
+                    missing_chats.append("channel")
+            
+            if GROUP_ID:
+                group_member = await check_membership(user_id, context, GROUP_ID)
+                if not group_member:
+                    missing_chats.append("group")
+            
             warning_message = (
-                "❌ You're still not in the channel!\n\n"
-                "Please join the channel first and then try again."
+                f"❌ You're still not in the {', '.join(missing_chats)}!\n\n"
+                "Please join all required chats first and then try again."
             )
             await query.edit_message_text(warning_message)
-            logger.info(f"User {user_id} still not in channel")
+            logger.info(f"User {user_id} still not in: {', '.join(missing_chats)}")
     except Exception as e:
         logger.error(f"Callback handler error: {e}")
         await query.edit_message_text("⚠️ Error verifying membership. Please try again.")
@@ -218,12 +308,13 @@ async def lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         logger.info(f"Lecture command from user: {user_id}")
         
-        # Check membership using our improved function
-        is_member = await check_membership(user_id, context)
-        if not is_member:
-            await send_verification_request(update, context)
-            logger.info(f"Sent verification request to user {user_id}")
-            return
+        # Check if verification is required and user is member
+        if REQUIRES_VERIFICATION:
+            is_member = await check_all_memberships(user_id, context)
+            if not is_member:
+                await send_verification_request(update, context)
+                logger.info(f"Sent verification request to user {user_id}")
+                return
         
         # Get all custom commands
         commands = list(custom_commands_collection.find({}))
@@ -335,7 +426,7 @@ async def remove_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ Command /{command_name} has been removed.")
             logger.info(f"Removed lecture command: /{command_name}")
         else:
-            await update.message.reply_text(f"❌ Command /{command_name} not found.")
+            await update.message.reply_text(f"❌ Command /{channel_invite} not found.")
             logger.info(f"Attempted to remove non-existent command: /{command_name}")
         
     except Exception as e:
@@ -355,30 +446,32 @@ async def lecture_command_handler(update: Update, context: ContextTypes.DEFAULT_
         if not cmd_data:
             return  # Not a lecture command
         
-        # Check membership using our improved function
-        is_member = await check_membership(user_id, context)
-        if is_member:
-            # Create inline buttons for group link and tutorial
-            keyboard = [
-                [InlineKeyboardButton(f"👉 Join {command.capitalize()} Group 👈", url=cmd_data["link"])],
-                [InlineKeyboardButton("📺 Watch Tutorial Video", url=TUTORIAL_VIDEO_LINK)]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            # Get description or use default
-            description = cmd_data.get("description", f"Join the {command} group")
-            
-            await update.message.reply_text(
-                f"📚 {description}\n\n"
-                "Click the button below to join the group:\n"
-                "Need help joining? Watch the tutorial video!",
-                reply_markup=reply_markup,
-                protect_content=True
-            )
-            logger.info(f"Sent lecture group link to user {user_id} for /{command}")
-        else:
-            await send_verification_request(update, context)
-            logger.info(f"Sent verification request to user {user_id}")
+        # Check if verification is required and user is member
+        if REQUIRES_VERIFICATION:
+            is_member = await check_all_memberships(user_id, context)
+            if not is_member:
+                await send_verification_request(update, context)
+                logger.info(f"Sent verification request to user {user_id}")
+                return
+        
+        # Create inline buttons for group link and tutorial
+        keyboard = [
+            [InlineKeyboardButton(f"👉 Join {command.capitalize()} Group 👈", url=cmd_data["link"])],
+            [InlineKeyboardButton("📺 Watch Tutorial Video", url=TUTORIAL_VIDEO_LINK)]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Get description or use default
+        description = cmd_data.get("description", f"Join the {command} group")
+        
+        await update.message.reply_text(
+            f"📚 {description}\n\n"
+            "Click the button below to join the group:\n"
+            "Need help joining? Watch the tutorial video!",
+            reply_markup=reply_markup,
+            protect_content=True
+        )
+        logger.info(f"Sent lecture group link to user {user_id} for /{command}")
     except Exception as e:
         logger.error(f"Lecture command handler error: {e}")
 
@@ -416,13 +509,23 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Failed to get MongoDB version: {e}")
             mongo_version = "Unknown"
         
+        # Get verification requirements
+        verification_status = "No verification required"
+        if CHANNEL_ID and GROUP_ID:
+            verification_status = "Requires both channel and group"
+        elif CHANNEL_ID:
+            verification_status = "Requires channel only"
+        elif GROUP_ID:
+            verification_status = "Requires group only"
+        
         # Format stats message
         stats_message = (
             "📊 Bot Statistics:\n\n"
             f"🏓 Ping: {ping_time:.2f} ms\n"
             f"👥 Total Users: {user_count}\n"
             f"📚 Lecture Groups: {command_count}\n"
-            f"⏱️ Uptime: {uptime_str}\n\n"
+            f"⏱️ Uptime: {uptime_str}\n"
+            f"🔐 Verification: {verification_status}\n\n"
             f"🐍 Python: {python_version}\n"
             f"🍃 MongoDB: {mongo_version}"
         )
@@ -643,6 +746,17 @@ def main():
         flask_thread.daemon = True
         flask_thread.start()
         logger.info("Flask health check server started on port 8080")
+
+        # Log verification requirements
+        if not REQUIRES_VERIFICATION:
+            logger.info("No verification required - bot will work without channel/group membership")
+        else:
+            if CHANNEL_ID and GROUP_ID:
+                logger.info(f"Verification required for both channel {CHANNEL_ID} and group {GROUP_ID}")
+            elif CHANNEL_ID:
+                logger.info(f"Verification required for channel {CHANNEL_ID}")
+            else:
+                logger.info(f"Verification required for group {GROUP_ID}")
 
         # Start Telegram bot
         logger.info("Starting bot application...")
