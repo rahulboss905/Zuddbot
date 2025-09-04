@@ -95,7 +95,7 @@ async def generate_invite_link(context: ContextTypes.DEFAULT_TYPE, chat_id: str)
         # Fallback to a basic link if generation fails
         if chat_id.startswith('@'):
             return f"https://t.me/{chat_id[1:]}"
-        elif chat_id.startswith('-'):
+        elif str(chat_id).startswith('-'):
             # For group IDs, we can't create a public link, so use the bot's invite
             return f"https://t.me/{context.bot.username}?startgroup=true"
         else:
