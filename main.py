@@ -68,10 +68,12 @@ try:
     db = client.telegram_bot_db
     users_collection = db.users
     custom_commands_collection = db.custom_commands
+    verified_users_collection = db.verified_users  # New collection for verified users
     logger.info("Connected to MongoDB successfully")
     
-    # Create index for command names
+    # Create indexes
     custom_commands_collection.create_index("command", unique=True)
+    verified_users_collection.create_index("user_id", unique=True)
 except Exception as e:
     logger.error(f"MongoDB connection failed: {e}")
     exit(1)
@@ -113,7 +115,7 @@ async def check_membership(user_id: int, context: ContextTypes.DEFAULT_TYPE, cha
                 status = member.status
                 logger.info(f"Membership check for user {user_id} in {chat_id}: {status} (attempt {attempt+1})")
                 
-                # Check all possible member statuses :cite[4]:cite[9]
+                # Check all possible member statuses
                 return status in ['member', 'administrator', 'creator', 'restricted']
             except Exception as e:
                 logger.warning(f"Standard membership check failed for {chat_id}: {e}")
@@ -148,6 +150,12 @@ async def check_all_memberships(user_id: int, context: ContextTypes.DEFAULT_TYPE
     if not REQUIRES_VERIFICATION:
         return True
         
+    # Check if user is already verified in our database
+    verified_user = verified_users_collection.find_one({"user_id": user_id})
+    if verified_user:
+        logger.info(f"User {user_id} is already verified in database")
+        return True
+        
     results = []
     
     if CHANNEL_ID:
@@ -160,9 +168,18 @@ async def check_all_memberships(user_id: int, context: ContextTypes.DEFAULT_TYPE
         results.append(group_member)
         logger.info(f"User {user_id} group membership: {group_member}")
     
+    # If user is member of all required chats, mark as verified in database
+    if all(results):
+        verified_users_collection.update_one(
+            {"user_id": user_id},
+            {"$set": {"verified_at": time.time()}},
+            upsert=True
+        )
+        logger.info(f"User {user_id} verified and saved to database")
+    
     return all(results)
 
-# Add restricted decorator to limit bot access :cite[1]:cite[7]
+# Add restricted decorator to limit bot access
 def restricted(func):
     from functools import wraps
     
@@ -225,7 +242,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"  𝗪𝗲𝗹𝗰𝗼𝗺𝗲, {first_name}! 🎉\n"
                 "╰───❖━❀🌟❀━❖───╯\n\n"
                 "🙏 𝗧𝗵𝗮𝗻𝗸 𝘆𝗼𝘂 𝗳𝗼𝗿 𝘀𝘂𝗯𝘀𝗰𝗿𝗶𝗯𝗶𝗻𝗴 𝘁𝗼 𝗼𝘂𝗿 𝗰𝗼𝗺𝗺𝘂𝗻𝗶𝘁𝘆!\n"
-                "🎯 𝗪𝗲'𝗿𝗲 𝗴𝗹𝗮𝗱 𝘁𝗼 𝗵𝗮𝘃𝗲 𝘆𝗼𝘂 𝗵𝗲𝗿𝗴.\n\n"
+                "🎯 𝗪𝗲'𝗿𝗲 𝗴𝗹𝗮𝗱 𝘁𝗼 𝗵𝗮𝘃𝗲 𝘆𝗼𝘂 𝗵𝗲𝗿𝗲.\n\n"
                 "➡️ 𝗨𝘀𝗲 𝘁𝗵𝗲𝘀𝗲 𝗰𝗼𝗺𝗺𝗮𝗻𝗱𝘀:\n\n"
                 "📚 `/lecture` - Show all available lecture groups\n"
                 "❓ `/help` - Get help with bot commands"
@@ -365,7 +382,7 @@ async def check_membership_callback(update: Update, context: ContextTypes.DEFAUL
         await query.edit_message_text("⚠️ Error verifying membership. Please try again.")
 
 # Unified lecture command to list all custom commands with descriptions
-@restricted  # Add restricted decorator :cite[1]:cite[7]
+@restricted
 async def lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -398,7 +415,7 @@ async def lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Lecture command error: {e}")
 
 # Admin command to add new lecture group command with description
-@restricted  # Add restricted decorator :cite[1]:cite[7]
+@restricted
 async def add_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -455,7 +472,7 @@ async def add_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Failed to add lecture command. Please try again.")
 
 # Admin command to remove lecture command
-@restricted  # Add restricted decorator :cite[1]:cite[7]
+@restricted
 async def remove_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -491,7 +508,7 @@ async def remove_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Failed to remove lecture command. Please try again.")
 
 # Handler for custom lecture commands - UPDATED WITH TUTORIAL VIDEO
-@restricted  # Add restricted decorator :cite[1]:cite[7]
+@restricted
 async def lecture_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -525,7 +542,7 @@ async def lecture_command_handler(update: Update, context: ContextTypes.DEFAULT_
     except Exception as e:
         logger.error(f"Lecture command handler error: {e}")
 
-@restricted  # Add restricted decorator :cite[1]:cite[7]
+@restricted
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -543,6 +560,9 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Get user count
         user_count = users_collection.count_documents({})
+        
+        # Get verified user count
+        verified_count = verified_users_collection.count_documents({})
         
         # Get lecture command count
         command_count = custom_commands_collection.count_documents({})
@@ -574,6 +594,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📊 Bot Statistics:\n\n"
             f"🏓 Ping: {ping_time:.2f} ms\n"
             f"👥 Total Users: {user_count}\n"
+            f"✅ Verified Users: {verified_count}\n"
             f"📚 Lecture Groups: {command_count}\n"
             f"⏱️ Uptime: {uptime_str}\n"
             f"🔐 Verification: {verification_status}\n\n"
@@ -582,12 +603,12 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         await test_message.edit_text(stats_message)
-        logger.info(f"Admin stats request: {user_count} users, {command_count} commands")
+        logger.info(f"Admin stats request: {user_count} users, {verified_count} verified, {command_count} commands")
         
     except Exception as e:
         logger.error(f"Stats command error: {e}")
 
-@restricted  # Add restricted decorator :cite[1]:cite[7]
+@restricted
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -750,7 +771,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Broadcast command error: {e}")
         await update.message.reply_text("⚠️ An error occurred during broadcast.")
 
-@restricted  # Add restricted decorator :cite[1]:cite[7]
+@restricted
 async def fcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -816,7 +837,7 @@ async def fcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Fcast command error: {e}")
         await update.message.reply_text("⚠️ An error occurred during forward broadcast.")
 
-@restricted  # Add restricted decorator :cite[1]:cite[7]
+@restricted
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
