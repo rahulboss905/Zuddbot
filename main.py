@@ -229,7 +229,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"  𝗪𝗲𝗹𝗰𝗼𝗺𝗲, {first_name}! 🎉\n"
                 "╰───❖━❀🌟❀━❖───╯\n\n"
                 "🎯 𝗪𝗲'𝗿𝗲 𝗴𝗹𝗮𝗱 𝘁𝗼 𝗵𝗮𝘃𝗲 𝘆𝗼𝘂 𝗵𝗲𝗿𝗲.\n\n"
-                "➡️ 𝗨𝘀𝗲 𝘁𝗵𝗲𝘀𝗲 𝗰𝗼𝗺𝗺𝗰𝗺𝗮𝗻𝗱𝘀:\n\n"
+                "➡️ 𝗨𝘀𝗲 𝘁𝗵𝗲𝘀𝗲 𝗰𝗼𝗺𝗺𝗮𝗻𝗱𝘀:\n\n"
                 "📚 `/lecture` - Show all available lecture groups\n"
                 "❓ `/help` - Get help with bot commands"
             )
@@ -806,7 +806,7 @@ def run_broadcast(context, user_id, total_users, users, progress_msg, replied_me
                     logger.error(f"Failed to update progress message: {e}")
                 
                 # Small delay to avoid rate limiting
-                time.sleep(0.5)  # Increased delay to reduce load
+                time.sleep(1)  # Increased delay to reduce load
         
         # Final update
         try:
@@ -1032,7 +1032,7 @@ def main():
 
         # Configure connection pool settings to prevent timeout errors
         request = HTTPXRequest(
-            connection_pool_size=30,  # Increased connection pool size
+            connection_pool_size=50,  # Increased connection pool size
             read_timeout=60.0,        # Increased read timeout
             write_timeout=60.0,       # Increased write timeout
             connect_timeout=60.0,     # Increased connection timeout
