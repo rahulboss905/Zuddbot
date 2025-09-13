@@ -15,6 +15,7 @@ from telegram.ext import (
     MessageHandler,
     filters
 )
+from telegram.request import HTTPXRequest
 
 # Create Flask app for health check
 app = Flask(__name__)
@@ -262,6 +263,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"User {user_id} needs verification")
     except Exception as e:
         logger.error(f"Start command error: {e}")
+        # Don't crash the bot on start command errors
+        try:
+            await update.message.reply_text(
+                "⚠️ Sorry, I'm experiencing high load right now. Please try again in a moment.",
+                protect_content=True
+            )
+        except:
+            pass  # If we can't send a message, just continue
 
 async def send_verification_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not REQUIRES_VERIFICATION:
@@ -271,14 +280,20 @@ async def send_verification_request(update: Update, context: ContextTypes.DEFAUL
     chat_count = 0
     
     if CHANNEL_ID:
-        channel_invite = await generate_invite_link(context, CHANNEL_ID)
-        keyboard.append([InlineKeyboardButton("✅ Join Channel", url=channel_invite)])
-        chat_count += 1
+        try:
+            channel_invite = await generate_invite_link(context, CHANNEL_ID)
+            keyboard.append([InlineKeyboardButton("✅ Join Channel", url=channel_invite)])
+            chat_count += 1
+        except Exception as e:
+            logger.error(f"Failed to generate channel invite link: {e}")
     
     if GROUP_ID:
-        group_invite = await generate_invite_link(context, GROUP_ID)
-        keyboard.append([InlineKeyboardButton("✅ Join Group", url=group_invite)])
-        chat_count += 1
+        try:
+            group_invite = await generate_invite_link(context, GROUP_ID)
+            keyboard.append([InlineKeyboardButton("✅ Join Group", url=group_invite)])
+            chat_count += 1
+        except Exception as e:
+            logger.error(f"Failed to generate group invite link: {e}")
     
     # Add verification button
     keyboard.append([InlineKeyboardButton("🔄 I've Joined", callback_data="check_membership")])
@@ -326,11 +341,14 @@ async def send_verification_request(update: Update, context: ContextTypes.DEFAUL
             "Sometimes it takes a few seconds for the system to update."
         )
     
-    await update.message.reply_text(
-        join_message,
-        reply_markup=reply_markup,
-        protect_content=True
-    )
+    try:
+        await update.message.reply_text(
+            join_message,
+            reply_markup=reply_markup,
+            protect_content=True
+        )
+    except Exception as e:
+        logger.error(f"Failed to send verification request: {e}")
 
 async def check_membership_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -353,13 +371,21 @@ async def check_membership_callback(update: Update, context: ContextTypes.DEFAUL
             missing_chats = []
             
             if CHANNEL_ID:
-                channel_member = await check_membership(user_id, context, CHANNEL_ID)
-                if not channel_member:
+                try:
+                    channel_member = await check_membership(user_id, context, CHANNEL_ID)
+                    if not channel_member:
+                        missing_chats.append("channel")
+                except Exception as e:
+                    logger.error(f"Failed to check channel membership: {e}")
                     missing_chats.append("channel")
             
             if GROUP_ID:
-                group_member = await check_membership(user_id, context, GROUP_ID)
-                if not group_member:
+                try:
+                    group_member = await check_membership(user_id, context, GROUP_ID)
+                    if not group_member:
+                        missing_chats.append("group")
+                except Exception as e:
+                    logger.error(f"Failed to check group membership: {e}")
                     missing_chats.append("group")
             
             # Create a more helpful error message
@@ -384,7 +410,10 @@ async def check_membership_callback(update: Update, context: ContextTypes.DEFAUL
             logger.info(f"User {user_id} still not in: {', '.join(missing_chats) if missing_chats else 'unknown'}")
     except Exception as e:
         logger.error(f"Callback handler error: {e}")
-        await query.edit_message_text("⚠️ Error verifying membership. Please try again.")
+        try:
+            await query.edit_message_text("⚠️ Error verifying membership. Please try again.")
+        except:
+            pass  # If we can't edit the message, just continue
 
 # Unified lecture command to list all custom commands with descriptions
 @restricted
@@ -418,6 +447,13 @@ async def lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     except Exception as e:
         logger.error(f"Lecture command error: {e}")
+        try:
+            await update.message.reply_text(
+                "⚠️ Sorry, I'm experiencing issues right now. Please try again later.",
+                protect_content=True
+            )
+        except:
+            pass
 
 # Admin command to add new lecture group command with description
 @restricted
@@ -985,9 +1021,23 @@ def main():
             else:
                 logger.info(f"Verification required for group {GROUP_ID}")
 
-        # Start Telegram bot
-        logger.info("Starting bot application...")
-        application = ApplicationBuilder().token(TOKEN).build()
+        # Configure connection pool settings to prevent timeout errors
+        request = HTTPXRequest(
+            connection_pool_size=20,  # Increase connection pool size
+            read_timeout=30.0,        # Increase read timeout
+            write_timeout=30.0,       # Increase write timeout
+            connect_timeout=30.0,     # Increase connection timeout
+            pool_timeout=30.0         # Increase pool timeout
+        )
+        
+        # Start Telegram bot with custom request configuration
+        logger.info("Starting bot application with enhanced connection pool...")
+        application = (
+            ApplicationBuilder()
+            .token(TOKEN)
+            .request(request)
+            .build()
+        )
         
         # Add handlers
         application.add_handler(CommandHandler("start", start))
@@ -1005,7 +1055,13 @@ def main():
         application.add_handler(MessageHandler(filters.COMMAND, lecture_command_handler))
         
         logger.info("Bot is now polling...")
-        application.run_polling()
+        application.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            read_timeout=30,  # Increase polling read timeout
+            write_timeout=30, # Increase polling write timeout
+            connect_timeout=30, # Increase polling connect timeout
+            pool_timeout=30    # Increase polling pool timeout
+        )
     except Exception as e:
         logger.critical(f"Fatal error in main: {e}")
         exit(1)
