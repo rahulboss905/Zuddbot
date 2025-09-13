@@ -225,7 +225,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"  𝗪𝗲𝗹𝗰𝗼𝗺𝗲, {first_name}! 🎉\n"
                 "╰───❖━❀🌟❀━❖───╯\n\n"
                 "🙏 𝗧𝗵𝗮𝗻𝗸 𝘆𝗼𝘂 𝗳𝗼𝗿 𝘀𝘂𝗯𝘀𝗰𝗿𝗶𝗯𝗶𝗻𝗴 𝘁𝗼 𝗼𝘂𝗿 𝗰𝗼𝗺𝗺𝘂𝗻𝗶𝘁𝘆!\n"
-                "🎯 𝗪𝗲'𝗿𝗲 𝗴𝗹𝗮𝗱 𝘁𝗼 𝗵𝗮𝘃𝗲 𝘆𝗼𝘂 𝗵𝗲𝗿𝗲.\n\n"
+                "🎯 𝗪𝗲'𝗿𝗲 𝗴𝗹𝗮𝗱 𝘁𝗼 𝗵𝗮𝘃𝗲 𝘆𝗼𝘂 𝗵𝗲𝗿𝗴.\n\n"
                 "➡️ 𝗨𝘀𝗲 𝘁𝗵𝗲𝘀𝗲 𝗰𝗼𝗺𝗺𝗮𝗻𝗱𝘀:\n\n"
                 "📚 `/lecture` - Show all available lecture groups\n"
                 "❓ `/help` - Get help with bot commands"
@@ -751,6 +751,72 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ An error occurred during broadcast.")
 
 @restricted  # Add restricted decorator :cite[1]:cite[7]
+async def fcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        user_id = update.effective_user.id
+        logger.info(f"Fcast command from user: {user_id}")
+        
+        if not await is_owner(user_id):
+            await update.message.reply_text("❌ This command is for bot owner only!")
+            logger.warning(f"Unauthorized fcast attempt by {user_id}")
+            return
+        
+        # Check if message is a reply
+        replied_message = update.message.reply_to_message
+        
+        if not replied_message:
+            await update.message.reply_text(
+                "⚠️ Please reply to a message with /fcast to forward it."
+            )
+            return
+        
+        total_users = users_collection.count_documents({})
+        success_count = 0
+        failed_count = 0
+        
+        progress_msg = await update.message.reply_text(
+            f"📢 Starting forward broadcast to {total_users} users...\n"
+            f"✅ Success: {success_count}\n"
+            f"❌ Failed: {failed_count}"
+        )
+        
+        for user in users_collection.find():
+            try:
+                # Forward the original message as-is (preserves original sender info)
+                await context.bot.forward_message(
+                    chat_id=user['user_id'],
+                    from_chat_id=replied_message.chat_id,
+                    message_id=replied_message.message_id
+                )
+                success_count += 1
+            except Exception as e:
+                failed_count += 1
+                logger.error(f"Failed to forward to user {user['user_id']}: {e}")
+            
+            # Update progress every 10 sends
+            if (success_count + failed_count) % 10 == 0:
+                await progress_msg.edit_text(
+                    f"📢 Forward broadcasting to {total_users} users...\n"
+                    f"✅ Success: {success_count}\n"
+                    f"❌ Failed: {failed_count}"
+                )
+                
+            # Small delay to avoid rate limiting
+            time.sleep(0.1)
+        
+        await progress_msg.edit_text(
+            f"🎉 Forward broadcast completed!\n"
+            f"📢 Sent to: {total_users} users\n"
+            f"✅ Success: {success_count}\n"
+            f"❌ Failed: {failed_count}"
+        )
+        logger.info(f"Forward broadcast completed. Success: {success_count}, Failed: {failed_count}")
+        
+    except Exception as e:
+        logger.error(f"Fcast command error: {e}")
+        await update.message.reply_text("⚠️ An error occurred during forward broadcast.")
+
+@restricted  # Add restricted decorator :cite[1]:cite[7]
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -775,7 +841,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "/addlecture <name> <link> <description> - Add new lecture group",
                 "/removelecture <name> - Remove a lecture group",
                 "/stats - View bot statistics",
-                "/broadcast <message> - Send message to all users (or reply to a message)"
+                "/broadcast <message> - Send message to all users (or reply to a message)",
+                "/fcast - Forward a message to all users (preserves original sender)"
             ]
             commands.extend(admin_commands)
         
@@ -822,6 +889,7 @@ def main():
         application.add_handler(CommandHandler("removelecture", remove_lecture))
         application.add_handler(CommandHandler("stats", stats))
         application.add_handler(CommandHandler("broadcast", broadcast))
+        application.add_handler(CommandHandler("fcast", fcast))
         application.add_handler(CommandHandler("help", help_command))
         application.add_handler(CallbackQueryHandler(check_membership_callback))
         
