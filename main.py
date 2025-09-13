@@ -3,6 +3,7 @@ import logging
 import threading
 import time
 import sys
+import asyncio
 from flask import Flask, Response
 from pymongo import MongoClient
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -198,7 +199,7 @@ def restricted(func):
             await send_verification_request(update, context)
             return
         
-        return await func(update, context, *args, **kwargs)
+        return await func(update, context, *args, *kwargs)
     return wrapped
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -246,7 +247,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"  𝗪𝗲𝗹𝗰𝗼𝗺𝗲, {first_name}! 🎉\n"
                 "╰───❖━❀🌟❀━❖───╯\n\n"
                 "🙏 𝗧𝗵𝗮𝗻𝗸 𝘆𝗼𝘂 𝗳𝗼𝗿 𝘀𝘂𝗯𝘀𝗰𝗿𝗶𝗯𝗶𝗻𝗴 𝘁𝗼 𝗼𝘂𝗿 𝗰𝗼𝗺𝗺𝘂𝗻𝗶𝘁𝘆!\n"
-                "🎯 𝗪𝗲'𝗿𝗲 𝗴𝗹𝗮𝗱 𝘁𝗼 𝗵𝗮𝘃𝗲 𝘆𝗼𝘂 𝗵𝗲𝗿𝗴.\n\n"
+                "🎯 𝗪𝗲'𝗿𝗲 𝗴𝗹𝗮𝗱 𝘁𝗼 𝗵𝗮𝘃𝗲 𝘆𝗼𝘂 𝗵𝗲𝗿𝗲.\n\n"
                 "➡️ 𝗨𝘀𝗲 𝘁𝗵𝗲𝘀𝗲 𝗰𝗼𝗺𝗺𝗮𝗻𝗱𝘀:\n\n"
                 "📚 `/lecture` - Show all available lecture groups\n"
                 "❓ `/help` - Get help with bot commands"
@@ -626,7 +627,7 @@ def run_broadcast(context, user_id, total_users, users, progress_msg, replied_me
             }
         
         # Function to send message to a user
-        def send_to_user(user_data):
+        async def send_to_user(user_data):
             nonlocal success_count, failed_count
             
             if active_broadcasts.get(user_id, {}).get("cancelled", False):
@@ -635,16 +636,17 @@ def run_broadcast(context, user_id, total_users, users, progress_msg, replied_me
             try:
                 if is_forward and replied_message:
                     # Forward the message
-                    context.application.bot.forward_message(
+                    await context.bot.forward_message(
                         chat_id=user_data['user_id'],
                         from_chat_id=replied_message.chat_id,
                         message_id=replied_message.message_id
                     )
                     success_count += 1
+                    return True
                 elif replied_message:
                     # Send the replied message as-is
                     if replied_message.text:
-                        context.application.bot.send_message(
+                        await context.bot.send_message(
                             chat_id=user_data['user_id'],
                             text=replied_message.text,
                             entities=replied_message.entities,
@@ -653,7 +655,7 @@ def run_broadcast(context, user_id, total_users, users, progress_msg, replied_me
                             disable_web_page_preview=True
                         )
                     elif replied_message.photo:
-                        context.application.bot.send_photo(
+                        await context.bot.send_photo(
                             chat_id=user_data['user_id'],
                             photo=replied_message.photo[-1].file_id,
                             caption=replied_message.caption,
@@ -662,7 +664,7 @@ def run_broadcast(context, user_id, total_users, users, progress_msg, replied_me
                             protect_content=True
                         )
                     elif replied_message.video:
-                        context.application.bot.send_video(
+                        await context.bot.send_video(
                             chat_id=user_data['user_id'],
                             video=replied_message.video.file_id,
                             caption=replied_message.caption,
@@ -671,7 +673,7 @@ def run_broadcast(context, user_id, total_users, users, progress_msg, replied_me
                             protect_content=True
                         )
                     elif replied_message.document:
-                        context.application.bot.send_document(
+                        await context.bot.send_document(
                             chat_id=user_data['user_id'],
                             document=replied_message.document.file_id,
                             caption=replied_message.caption,
@@ -680,7 +682,7 @@ def run_broadcast(context, user_id, total_users, users, progress_msg, replied_me
                             protect_content=True
                         )
                     elif replied_message.audio:
-                        context.application.bot.send_audio(
+                        await context.bot.send_audio(
                             chat_id=user_data['user_id'],
                             audio=replied_message.audio.file_id,
                             caption=replied_message.caption,
@@ -689,7 +691,7 @@ def run_broadcast(context, user_id, total_users, users, progress_msg, replied_me
                             protect_content=True
                         )
                     elif replied_message.voice:
-                        context.application.bot.send_voice(
+                        await context.bot.send_voice(
                             chat_id=user_data['user_id'],
                             voice=replied_message.voice.file_id,
                             caption=replied_message.caption,
@@ -698,43 +700,49 @@ def run_broadcast(context, user_id, total_users, users, progress_msg, replied_me
                             protect_content=True
                         )
                     elif replied_message.sticker:
-                        context.application.bot.send_sticker(
+                        await context.bot.send_sticker(
                             chat_id=user_data['user_id'],
                             sticker=replied_message.sticker.file_id,
                             protect_content=True
                         )
                     else:
                         # Fallback: forward the message
-                        context.application.bot.forward_message(
+                        await context.bot.forward_message(
                             chat_id=user_data['user_id'],
                             from_chat_id=replied_message.chat_id,
                             message_id=replied_message.message_id,
                             protect_content=True
                         )
                     success_count += 1
+                    return True
                 else:
                     # Send text message from command arguments
                     message = ' '.join(context.args)
-                    context.application.bot.send_message(
+                    await context.bot.send_message(
                         chat_id=user_data['user_id'],
                         text=message,
                         protect_content=True,
                         disable_web_page_preview=True
                     )
                     success_count += 1
+                    return True
                     
-                return True
             except Exception as e:
                 logger.error(f"Failed to send to user {user_data['user_id']}: {e}")
                 failed_count += 1
                 return False
+        
+        # Create a new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         
         # Send messages to users
         for i, user in enumerate(users):
             if active_broadcasts.get(user_id, {}).get("cancelled", False):
                 break
                 
-            send_to_user(user)
+            # Run the async function in the thread's event loop
+            loop.run_until_complete(send_to_user(user))
             
             # Update progress every 10 sends
             if (i + 1) % 10 == 0 or (i + 1) == total_users:
@@ -747,7 +755,7 @@ def run_broadcast(context, user_id, total_users, users, progress_msg, replied_me
                     keyboard = [[InlineKeyboardButton("❌ Cancel Broadcast", callback_data=f"cancel_broadcast:{user_id}")]]
                     reply_markup = InlineKeyboardMarkup(keyboard)
                     
-                    context.application.bot.edit_message_text(
+                    loop.run_until_complete(context.bot.edit_message_text(
                         chat_id=progress_msg.chat_id,
                         message_id=progress_msg.message_id,
                         text=(
@@ -757,7 +765,7 @@ def run_broadcast(context, user_id, total_users, users, progress_msg, replied_me
                             f"📊 Progress: {i + 1}/{total_users} ({((i + 1) / total_users * 100):.1f}%)"
                         ),
                         reply_markup=reply_markup
-                    )
+                    ))
                 except Exception as e:
                     logger.error(f"Failed to update progress message: {e}")
                 
@@ -781,11 +789,11 @@ def run_broadcast(context, user_id, total_users, users, progress_msg, replied_me
                     f"❌ Failed: {failed_count}"
                 )
             
-            context.application.bot.edit_message_text(
+            loop.run_until_complete(context.bot.edit_message_text(
                 chat_id=progress_msg.chat_id,
                 message_id=progress_msg.message_id,
                 text=final_message
-            )
+            ))
         except Exception as e:
             logger.error(f"Failed to update final message: {e}")
         
@@ -793,6 +801,8 @@ def run_broadcast(context, user_id, total_users, users, progress_msg, replied_me
         with broadcast_lock:
             if user_id in active_broadcasts:
                 del active_broadcasts[user_id]
+                
+        loop.close()
                 
     except Exception as e:
         logger.error(f"Broadcast thread error: {e}")
