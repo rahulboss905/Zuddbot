@@ -229,7 +229,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"  𝗪𝗲𝗹𝗰𝗼𝗺𝗲, {first_name}! 🎉\n"
                 "╰───❖━❀🌟❀━❖───╯\n\n"
                 "🎯 𝗪𝗲'𝗿𝗲 𝗴𝗹𝗮𝗱 𝘁𝗼 𝗵𝗮𝘃𝗲 𝘆𝗼𝘂 𝗵𝗲𝗿𝗲.\n\n"
-                "➡️ 𝗨𝘀𝗲 𝘁𝗵𝗲𝘀𝗲 𝗰𝗼𝗺𝗺𝗮𝗻𝗱𝘀:\n\n"
+                "➡️ 𝗨𝘀𝗲 𝘁𝗵𝗲𝘀𝗲 𝗰𝗼𝗺𝗺𝗰𝗺𝗮𝗻𝗱𝘀:\n\n"
                 "📚 `/lecture` - Show all available lecture groups\n"
                 "❓ `/help` - Get help with bot commands"
             )
@@ -660,7 +660,8 @@ def run_broadcast(context, user_id, total_users, users, progress_msg, replied_me
                 "cancelled": False,
                 "progress": 0,
                 "total": total_users,
-                "progress_msg": progress_msg
+                "progress_msg": progress_msg,
+                "thread": threading.current_thread()
             }
         
         # Function to send message to a user
@@ -776,6 +777,7 @@ def run_broadcast(context, user_id, total_users, users, progress_msg, replied_me
         # Send messages to users
         for i, user in enumerate(users):
             if active_broadcasts.get(user_id, {}).get("cancelled", False):
+                logger.info(f"Broadcast cancelled by user {user_id}")
                 break
                 
             # Run the async function in the thread's event loop
@@ -804,7 +806,7 @@ def run_broadcast(context, user_id, total_users, users, progress_msg, replied_me
                     logger.error(f"Failed to update progress message: {e}")
                 
                 # Small delay to avoid rate limiting
-                time.sleep(0.1)
+                time.sleep(0.5)  # Increased delay to reduce load
         
         # Final update
         try:
@@ -952,6 +954,13 @@ async def cancel_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 active_broadcasts[user_id]["cancelled"] = True
                 await update.message.reply_text("✅ Broadcast cancellation requested!")
                 logger.info(f"Broadcast cancelled by user {user_id}")
+                
+                # Wait a moment for the thread to finish
+                time.sleep(1)
+                
+                # Clean up the broadcast entry
+                if user_id in active_broadcasts:
+                    del active_broadcasts[user_id]
             else:
                 await update.message.reply_text("❌ No active broadcast to cancel!")
                 
@@ -1023,11 +1032,11 @@ def main():
 
         # Configure connection pool settings to prevent timeout errors
         request = HTTPXRequest(
-            connection_pool_size=20,  # Increase connection pool size
-            read_timeout=30.0,        # Increase read timeout
-            write_timeout=30.0,       # Increase write timeout
-            connect_timeout=30.0,     # Increase connection timeout
-            pool_timeout=30.0         # Increase pool timeout
+            connection_pool_size=30,  # Increased connection pool size
+            read_timeout=60.0,        # Increased read timeout
+            write_timeout=60.0,       # Increased write timeout
+            connect_timeout=60.0,     # Increased connection timeout
+            pool_timeout=60.0         # Increased pool timeout
         )
         
         # Start Telegram bot with custom request configuration
@@ -1036,6 +1045,7 @@ def main():
             ApplicationBuilder()
             .token(TOKEN)
             .request(request)
+            .concurrent_updates(True)  # Enable concurrent updates
             .build()
         )
         
@@ -1060,7 +1070,8 @@ def main():
             read_timeout=30,  # Increase polling read timeout
             write_timeout=30, # Increase polling write timeout
             connect_timeout=30, # Increase polling connect timeout
-            pool_timeout=30    # Increase polling pool timeout
+            pool_timeout=30,    # Increase polling pool timeout
+            drop_pending_updates=True  # Drop pending updates on startup
         )
     except Exception as e:
         logger.critical(f"Fatal error in main: {e}")
