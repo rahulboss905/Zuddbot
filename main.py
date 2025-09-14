@@ -3,7 +3,6 @@ import logging
 import threading
 import time
 import sys
-import asyncio
 from flask import Flask, Response
 from pymongo import MongoClient
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -15,7 +14,6 @@ from telegram.ext import (
     MessageHandler,
     filters
 )
-from telegram.request import HTTPXRequest
 
 # Create Flask app for health check
 app = Flask(__name__)
@@ -38,10 +36,6 @@ logger = logging.getLogger(__name__)
 # Bot start time for uptime calculation
 bot_start_time = time.time()
 
-# Global variables for broadcast management
-active_broadcasts = {}
-broadcast_lock = threading.Lock()
-
 # Helper function to format uptime
 def format_uptime(seconds):
     days, seconds = divmod(seconds, 86400)
@@ -51,157 +45,32 @@ def format_uptime(seconds):
 
 # Load environment variables
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID", "").strip()
-GROUP_ID = os.getenv("TELEGRAM_GROUP_ID", "").strip()
+CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
+INVITE_LINK = os.getenv("TELEGRAM_INVITE_LINK")
+GROUP_LINK = os.getenv("TELEGRAM_GROUP_LINK")
 MONGODB_URI = os.getenv("MONGODB_URI")
 ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")
-TUTORIAL_VIDEO_LINK = os.getenv("TUTORIAL_VIDEO_LINK", "https://youtube.com/shorts/UhccqnGY3PY?si=1aswpXBhcFP8L8tM")
 
-# Verify required environment variables
-if not all([TOKEN, MONGODB_URI, ADMIN_USER_ID]):
+# Verify environment variables
+if not all([TOKEN, CHANNEL_ID, INVITE_LINK, GROUP_LINK, MONGODB_URI, ADMIN_USER_ID]):
     logger.error("Missing required environment variables!")
-    missing = [var for var in ["TOKEN", "MONGODB_URI", "ADMIN_USER_ID"] 
+    missing = [var for var in ["TOKEN", "CHANNEL_ID", "INVITE_LINK", "GROUP_LINK", "MONGODB_URI", "ADMIN_USER_ID"] 
                if not os.getenv(var)]
     logger.error(f"Missing variables: {', '.join(missing)}")
     exit(1)
-
-# Check if any verification is required
-REQUIRES_VERIFICATION = bool(CHANNEL_ID or GROUP_ID)
 
 # MongoDB setup
 try:
     client = MongoClient(MONGODB_URI)
     db = client.telegram_bot_db
     users_collection = db.users
-    custom_commands_collection = db.custom_commands
-    verified_users_collection = db.verified_users  # New collection for verified users
     logger.info("Connected to MongoDB successfully")
-    
-    # Create indexes
-    custom_commands_collection.create_index("command", unique=True)
-    verified_users_collection.create_index("user_id", unique=True)
 except Exception as e:
     logger.error(f"MongoDB connection failed: {e}")
     exit(1)
 
 async def is_owner(user_id: int) -> bool:
     return str(user_id) == ADMIN_USER_ID
-
-async def generate_invite_link(context: ContextTypes.DEFAULT_TYPE, chat_id: str) -> str:
-    """Generate a temporary invite link that expires in 5 minutes"""
-    try:
-        # Create an invite link that expires in 5 minutes
-        expire_date = int(time.time()) + 300  # 5 minutes from now
-        invite_link = await context.bot.create_chat_invite_link(
-            chat_id=chat_id,
-            expire_date=expire_date,
-            member_limit=1  # Single use link
-        )
-        return invite_link.invite_link
-    except Exception as e:
-        logger.error(f"Failed to generate invite link for {chat_id}: {e}")
-        # Fallback to a basic link if generation fails
-        if chat_id.startswith('@'):
-            return f"https://t.me/{chat_id[1:]}"
-        elif str(chat_id).startswith('-'):
-            # For group IDs, we can't create a public link, so use the bot's invite
-            return f"https://t.me/{context.bot.username}?startgroup=true"
-        else:
-            return f"https://t.me/{chat_id}"
-
-async def check_membership(user_id: int, context: ContextTypes.DEFAULT_TYPE, chat_id: str) -> bool:
-    """Check if user is a member of a specific chat with improved error handling"""
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            # Try different approaches to check membership
-            try:
-                # First try the standard method
-                member = await context.bot.get_chat_member(chat_id=chat_id, user_id=user_id)
-                status = member.status
-                logger.info(f"Membership check for user {user_id} in {chat_id}: {status} (attempt {attempt+1})")
-                
-                # Check all possible member statuses
-                return status in ['member', 'administrator', 'creator', 'restricted']
-            except Exception as e:
-                logger.warning(f"Standard membership check failed for {chat_id}: {e}")
-                
-                # Try alternative method for groups
-                try:
-                    # Get chat information first
-                    chat = await context.bot.get_chat(chat_id)
-                    member = await context.bot.get_chat_member(chat_id=chat.id, user_id=user_id)
-                    status = member.status
-                    logger.info(f"Alternative membership check for user {user_id} in {chat_id}: {status} (attempt {attempt+1})")
-                    return status in ['member', 'administrator', 'creator', 'restricted']
-                except Exception as e2:
-                    logger.error(f"Alternative membership check also failed for {chat_id}: {e2}")
-                    
-                    # If this is the last attempt, return False
-                    if attempt == max_retries - 1:
-                        return False
-                    
-                    # Wait before retrying
-                    time.sleep(1)
-        except Exception as e:
-            logger.error(f"Membership check error for {chat_id}: {e}")
-            if attempt == max_retries - 1:
-                return False
-            time.sleep(1)
-    
-    return False
-
-async def check_all_memberships(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Check if user is a member of all required chats"""
-    if not REQUIRES_VERIFICATION:
-        return True
-        
-    # Check if user is already verified in our database
-    verified_user = verified_users_collection.find_one({"user_id": user_id})
-    if verified_user:
-        logger.info(f"User {user_id} is already verified in database")
-        return True
-        
-    results = []
-    
-    if CHANNEL_ID:
-        channel_member = await check_membership(user_id, context, CHANNEL_ID)
-        results.append(channel_member)
-        logger.info(f"User {user_id} channel membership: {channel_member}")
-    
-    if GROUP_ID:
-        group_member = await check_membership(user_id, context, GROUP_ID)
-        results.append(group_member)
-        logger.info(f"User {user_id} group membership: {group_member}")
-    
-    # If user is member of all required chats, mark as verified in database
-    if all(results):
-        verified_users_collection.update_one(
-            {"user_id": user_id},
-            {"$set": {"verified_at": time.time()}},
-            upsert=True
-        )
-        logger.info(f"User {user_id} verified and saved to database")
-    
-    return all(results)
-
-# Add restricted decorator to limit bot access
-def restricted(func):
-    from functools import wraps
-    
-    @wraps(func)
-    async def wrapped(update, context, *args, **kwargs):
-        user_id = update.effective_user.id
-        
-        # Check if user is member of required groups/channels
-        is_member = await check_all_memberships(user_id, context)
-        if not is_member and REQUIRES_VERIFICATION:
-            logger.warning(f"Unauthorized access attempt by user {user_id}")
-            await send_verification_request(update, context)
-            return
-        
-        return await func(update, context, *args, **kwargs)
-    return wrapped
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -222,133 +91,51 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })
             logger.info(f"Added new user to DB: {user_id}")
         
-        # Check if verification is required
-        if not REQUIRES_VERIFICATION:
-            welcome_message = (
-                "╭───❖━❀🌟❀━❖───╮\n"
-                f"  𝗪𝗲𝗹𝗰𝗼𝗺𝗲, {first_name}! 🎉\n"
-                "╰───❖━❀🌟❀━❖───╯\n\n"
-                "🎯 𝗪𝗲'𝗿𝗲 𝗴𝗹𝗮𝗱 𝘁𝗼 𝗵𝗮𝘃𝗲 𝘆𝗼𝘂 𝗵𝗲𝗿𝗲.\n\n"
-                "➡️ 𝗨𝘀𝗲 𝘁𝗵𝗲𝘀𝗲 𝗰𝗼𝗺𝗺𝗮𝗻𝗱𝘀:\n\n"
-                "📚 `/lecture` - Show all available lecture groups\n"
-                "❓ `/help` - Get help with bot commands"
-            )
-            await update.message.reply_text(
-                welcome_message,
-                protect_content=True
-            )
-            logger.info(f"User {user_id} started bot (no verification required)")
-            return
-        
-        # Check membership in all required chats
-        is_member = await check_all_memberships(user_id, context)
-        if is_member:
-            welcome_message = (
-                "╭───❖━❀🌟❀━❖───╮\n"
-                f"  𝗪𝗲𝗹𝗰𝗼𝗺𝗲, {first_name}! 🎉\n"
-                "╰───❖━❀🌟❀━❖───╯\n\n"
-                "🙏 𝗧𝗵𝗮𝗻𝗸 𝘆𝗼𝘂 𝗳𝗼𝗿 𝘀𝘂𝗯𝘀𝗰𝗿𝗶𝗯𝗶𝗻𝗴 𝘁𝗼 𝗼𝘂𝗿 𝗰𝗼𝗺𝗺𝘂𝗻𝗶𝘁𝘆!\n"
-                "🎯 𝗪𝗲'𝗿𝗲 𝗴𝗹𝗮𝗱 𝘁𝗼 𝗵𝗮𝘃𝗲 𝘆𝗼𝘂 𝗵𝗲𝗿𝗲.\n\n"
-                "➡️ 𝗨𝘀𝗲 𝘁𝗵𝗲𝘀𝗲 𝗰𝗼𝗺𝗺𝗮𝗻𝗱𝘀:\n\n"
-                "📚 `/lecture` - Show all available lecture groups\n"
-                "❓ `/help` - Get help with bot commands"
-            )
-            await update.message.reply_text(
-                welcome_message,
-                protect_content=True
-            )
-            logger.info(f"User {user_id} is verified in all required chats")
-        else:
+        # Check channel membership
+        try:
+            member = await context.bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+            if member.status in ['member', 'administrator', 'creator']:
+                welcome_message = (
+                    "╭───❖━❀🌟❀━❖───╮\n"
+                    f"  𝗪𝗲𝗹𝗰𝗼𝗺𝗲, {first_name}! 🎉\n"
+                    "╰───❖━❀🌟❀━❖───╯\n\n"
+                    "🙏 𝗧𝗵𝗮𝗻𝗸 𝘆𝗼𝘂 𝗳𝗼𝗿 𝘀𝘂𝗯𝘀𝗰𝗿𝗶𝗯𝗶𝗻𝗴 𝘁𝗼 𝗼𝘂𝗿 𝗰𝗵𝗮𝗻𝗻𝗲𝗹!\n"
+                    "🎯 𝗪𝗲'𝗿𝗲 𝗴𝗹𝗮𝗱 𝘁𝗼 𝗵𝗮𝘃𝗲 𝘆𝗼𝘂 𝗵𝗲𝗿𝗲.\n\n"
+                    "➡️ 𝗧𝗼 𝗴𝗲𝘁 𝘁𝗵𝗲 𝗴𝗿𝗼𝘂𝗽 𝗹𝗶𝗻𝗸, 𝗷𝘂𝘀𝘁 𝘀𝗲𝗻𝗱:\n\n"
+                    "🔗 `/link`"
+                )
+                await update.message.reply_text(welcome_message)
+                logger.info(f"User {user_id} is verified")
+            else:
+                await send_verification_request(update, context)
+                logger.info(f"User {user_id} needs verification")
+        except Exception as e:
+            logger.error(f"Membership check error: {e}")
             await send_verification_request(update, context)
-            logger.info(f"User {user_id} needs verification")
     except Exception as e:
         logger.error(f"Start command error: {e}")
-        # Don't crash the bot on start command errors
-        try:
-            await update.message.reply_text(
-                "⚠️ Sorry, I'm experiencing high load right now. Please try again in a moment.",
-                protect_content=True
-            )
-        except:
-            pass  # If we can't send a message, just continue
 
 async def send_verification_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not REQUIRES_VERIFICATION:
-        return
-        
-    keyboard = []
-    chat_count = 0
-    
-    if CHANNEL_ID:
-        try:
-            channel_invite = await generate_invite_link(context, CHANNEL_ID)
-            keyboard.append([InlineKeyboardButton("✅ Join Channel", url=channel_invite)])
-            chat_count += 1
-        except Exception as e:
-            logger.error(f"Failed to generate channel invite link: {e}")
-    
-    if GROUP_ID:
-        try:
-            group_invite = await generate_invite_link(context, GROUP_ID)
-            keyboard.append([InlineKeyboardButton("✅ Join Group", url=group_invite)])
-            chat_count += 1
-        except Exception as e:
-            logger.error(f"Failed to generate group invite link: {e}")
-    
-    # Add verification button
-    keyboard.append([InlineKeyboardButton("🔄 I've Joined", callback_data="check_membership")])
-    
+    keyboard = [
+        [InlineKeyboardButton("✅ Join Channel", url=INVITE_LINK)],
+        [InlineKeyboardButton("🔄 I've Joined", callback_data="check_membership")]
+    ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Create appropriate message based on what needs to be joined
-    if CHANNEL_ID and GROUP_ID:
-        join_message = (
-            "⚠️ Please Join Our Channel and Group to Use This Bot!\n\n"
-            "📢 Our community provides:\n"
-            "— 📝 Important Updates\n"  
-            "— 🎁 Free Resources\n"  
-            "— 📚 Daily Quiz & Guidance\n"  
-            "— ❗ Exclusive Content\n\n"
-            "✅ After Joining, tap \"I've Joined\" below to continue!\n\n"
-            "🔒 Invite links expire in 5 minutes\n\n"
-            "ℹ️ If you've already joined, please wait a moment and try again. "
-            "Sometimes it takes a few seconds for the system to update."
-        )
-    elif CHANNEL_ID:
-        join_message = (
-            "⚠️ Please Join Our Channel to Use This Bot!\n\n"
-            "📢 Our channel provides:\n"
-            "— 📝 Important Updates\n"  
-            "— 🎁 Free Resources\n"  
-            "— 📚 Daily Quiz & Guidance\n"  
-            "— ❗ Exclusive Content\n\n"
-            "✅ After Joining, tap \"I've Joined\" below to continue!\n\n"
-            "🔒 Invite link expires in 5 minutes\n\n"
-            "ℹ️ If you've already joined, please wait a moment and try again. "
-            "Sometimes it takes a few seconds for the system to update."
-        )
-    else:  # Only group
-        join_message = (
-            "⚠️ Please Join Our Group to Use This Bot!\n\n"
-            "📢 Our group provides:\n"
-            "— 📝 Important Updates\n"  
-            "— 🎁 Free Resources\n"  
-            "— 📚 Daily Quiz & Guidance\n"  
-            "— ❗ Exclusive Content\n\n"
-            "✅ After Joining, tap \"I've Joined\" below to continue!\n\n"
-            "🔒 Invite link expires in 5 minutes\n\n"
-            "ℹ️ If you've already joined, please wait a moment and try again. "
-            "Sometimes it takes a few seconds for the system to update."
-        )
+    join_message = (
+        "⚠️ 𝙋𝙡𝙚𝙖𝙨𝙚 𝙅𝙤𝙞𝙣 𝙊𝙪𝙧 𝘾𝙝𝙖𝙣𝙣𝙚𝙡 𝙩𝙤 𝙐𝙨𝙚 𝙏𝙝𝙞𝙨 𝘽𝙤𝙩!\n\n"
+        "📢 𝗢𝘂𝗿 𝗰𝗵𝗮𝗻𝗻𝗲𝗹 𝗽𝗿𝗼𝘃𝗶𝗱𝗲𝘀:\n"
+        "— 📝 𝗜𝗺𝗽𝗼𝗿𝘁𝗮𝗻𝘁 𝗨𝗽𝗱𝗮𝘁𝗲𝘀\n"  
+        "— 🎁 𝗙𝗿𝗲𝗲 𝗥𝗲𝘀𝗼𝘂𝗿𝗰𝗲𝘀\n"  
+        "— 📚 𝗗𝗮𝗶𝗹𝘆 𝗤𝘂𝗶𝘇 & 𝗚𝘂𝗶𝗱𝗮𝗻𝗰𝗲\n"  
+        "— ❗ 𝗘𝘅𝗰𝗹𝘂𝘀𝗶𝘃𝗲 𝗖𝗼𝗻𝘁𝗲𝗻𝘁\n\n"
+        "✅ 𝘼𝙛𝙩𝙚𝙧 𝙅𝙤𝙞𝙣𝙞𝙣𝙜, 𝙩𝙖𝙥 \"𝐈'𝐯𝐞 𝐉𝐨𝐢𝐧𝐞𝐝\" 𝙗𝙚𝙡𝙤𝙬 𝙩𝙤 𝙘𝙤𝙣𝙩𝙞𝙣𝙪𝙚!"
+    )
     
-    try:
-        await update.message.reply_text(
-            join_message,
-            reply_markup=reply_markup,
-            protect_content=True
-        )
-    except Exception as e:
-        logger.error(f"Failed to send verification request: {e}")
+    await update.message.reply_text(
+        join_message,
+        reply_markup=reply_markup
+    )
 
 async def check_membership_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -358,232 +145,52 @@ async def check_membership_callback(update: Update, context: ContextTypes.DEFAUL
         
         logger.info(f"Membership check callback from user: {user_id}")
         
-        # Check membership in all required chats
-        is_member = await check_all_memberships(user_id, context)
-        if is_member:
-            await query.edit_message_text(
-                "✅ Verification successful!\n"
-                "Use /lecture to see all available groups or /help for assistance."
+        try:
+            member = await context.bot.get_chat_member(
+                chat_id=CHANNEL_ID, 
+                user_id=user_id
             )
-            logger.info(f"User {user_id} verified successfully in all required chats")
-        else:
-            # Find out which chats the user is missing
-            missing_chats = []
-            
-            if CHANNEL_ID:
-                try:
-                    channel_member = await check_membership(user_id, context, CHANNEL_ID)
-                    if not channel_member:
-                        missing_chats.append("channel")
-                except Exception as e:
-                    logger.error(f"Failed to check channel membership: {e}")
-                    missing_chats.append("channel")
-            
-            if GROUP_ID:
-                try:
-                    group_member = await check_membership(user_id, context, GROUP_ID)
-                    if not group_member:
-                        missing_chats.append("group")
-                except Exception as e:
-                    logger.error(f"Failed to check group membership: {e}")
-                    missing_chats.append("group")
-            
-            # Create a more helpful error message
-            if missing_chats:
-                error_message = (
-                    f"❌ We couldn't verify your membership in the {', '.join(missing_chats)}!\n\n"
-                    "This could be because:\n"
-                    "1. You haven't joined yet\n"
-                    "2. You just joined and the system needs time to update\n"
-                    "3. There's a temporary issue with verification\n\n"
-                    "Please make sure you've joined and wait a moment before trying again.\n\n"
-                    "If the problem persists, please contact support."
+            if member.status in ['member', 'administrator', 'creator']:
+                await query.edit_message_text(
+                    "✅ Verification successful!\n"
+                    "Use /link to get access to our community group."
                 )
+                logger.info(f"User {user_id} verified successfully")
             else:
-                error_message = (
-                    "❌ We couldn't verify your membership!\n\n"
-                    "Please make sure you've joined all required chats and wait a moment before trying again.\n\n"
-                    "If the problem persists, please contact support."
+                warning_message = (
+                    "❌ 𝙔𝙤𝙪'𝙧𝙚 𝙨𝙩𝙞𝙡𝙡 𝙣𝙤𝙩 𝙞𝙣 𝙩𝙝𝙚 𝙘𝙝𝙖𝙣𝙣𝙚𝙡!\n\n"
+                    "😏 𝘿𝙤𝙣'𝙩 𝙗𝙚 𝙤𝙫𝙚𝙧𝙨𝙢𝙖𝙧𝙩 — 𝙩𝙝𝙞𝙨 𝙗𝙤𝙩 𝙬𝙤𝙣'𝙩 𝙬𝙤𝙧𝙠 𝙪𝙣𝙩𝙞𝙡 𝙮𝙤𝙪 𝙟𝙤𝙞𝙣!\n\n"
+                    "📢 𝙋𝙡𝙚𝙖𝙨𝙚 𝙟𝙤𝙞𝙣 𝙩𝙝𝙚 𝙘𝙝𝙖𝙣𝙣𝙚𝙡 𝙛𝙞𝙧𝙨𝙩 𝙖𝙣𝙙 𝙩𝙝𝙚𝙣 𝙩𝙧𝙮 𝙖𝙜𝙖𝙞𝙣."
                 )
-                
-            await query.edit_message_text(error_message)
-            logger.info(f"User {user_id} still not in: {', '.join(missing_chats) if missing_chats else 'unknown'}")
+                await query.edit_message_text(warning_message)
+                logger.info(f"User {user_id} still not in channel")
+        except Exception as e:
+            logger.error(f"Callback membership error: {e}")
+            await query.edit_message_text("⚠️ Error verifying membership. Please try again.")
     except Exception as e:
         logger.error(f"Callback handler error: {e}")
+
+async def link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        user_id = update.effective_user.id
+        logger.info(f"Link command from user: {user_id}")
+        
         try:
-            await query.edit_message_text("⚠️ Error verifying membership. Please try again.")
-        except:
-            pass  # If we can't edit the message, just continue
-
-# Unified lecture command to list all custom commands with descriptions
-@restricted
-async def lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        user_id = update.effective_user.id
-        logger.info(f"Lecture command from user: {user_id}")
-        
-        # Get all custom commands
-        commands = list(custom_commands_collection.find({}))
-        
-        if not commands:
-            await update.message.reply_text(
-                "📚 No lecture groups available yet. Check back later!",
-                protect_content=True
-            )
-            return
-            
-        # Create response with all commands and descriptions
-        response = "📚 Available Lecture Groups:\n\n"
-        for cmd in commands:
-            response += f"🔹 /{cmd['command']} - {cmd.get('description', 'No description')}\n\n"
-        
-        response += "\nUse any command above to join its group!"
-        
-        await update.message.reply_text(
-            response,
-            protect_content=True
-        )
-        logger.info(f"Sent lecture list to user {user_id}")
-        
+            member = await context.bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+            if member.status in ['member', 'administrator', 'creator']:
+                await update.message.reply_text(
+                    f"🔗 Join our group here:\n{GROUP_LINK}"
+                )
+                logger.info(f"Sent group link to user {user_id}")
+            else:
+                await send_verification_request(update, context)
+                logger.info(f"Sent verification request to user {user_id}")
+        except Exception as e:
+            logger.error(f"Link command membership check error: {e}")
+            await send_verification_request(update, context)
     except Exception as e:
-        logger.error(f"Lecture command error: {e}")
-        try:
-            await update.message.reply_text(
-                "⚠️ Sorry, I'm experiencing issues right now. Please try again later.",
-                protect_content=True
-            )
-        except:
-            pass
+        logger.error(f"Link command error: {e}")
 
-# Admin command to add new lecture group command with description
-@restricted
-async def add_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        user_id = update.effective_user.id
-        logger.info(f"Addlecture command from user: {user_id}")
-        
-        if not await is_owner(user_id):
-            await update.message.reply_text("❌ This command is for bot owner only!")
-            logger.warning(f"Unauthorized addlecture attempt by {user_id}")
-            return
-        
-        if len(context.args) < 3:
-            await update.message.reply_text(
-                "⚠️ Please provide command name, link, and description.\n"
-                "Usage: /addlecture <command_name> <link> <description>\n"
-                "Example: /addlecture maths https://t.me/mathsgroup \"Mathematics study group\""
-            )
-            return
-        
-        command_name = context.args[0].lower().strip()
-        group_link = context.args[1].strip()
-        
-        # Combine all remaining arguments as description
-        description = ' '.join(context.args[2:])
-        
-        # Validate command name
-        if command_name.startswith('/'):
-            command_name = command_name[1:]
-            
-        if not command_name.isalpha():
-            await update.message.reply_text("❌ Command name must contain only letters!")
-            return
-            
-        # Save to database with description
-        custom_commands_collection.update_one(
-            {"command": command_name},
-            {"$set": {
-                "link": group_link,
-                "description": description
-            }},
-            upsert=True
-        )
-        
-        await update.message.reply_text(
-            f"✅ Lecture group command added successfully!\n\n"
-            f"🔹 Command: /{command_name}\n"
-            f"🔗 Link: {group_link}\n"
-            f"📝 Description: {description}\n\n"
-            f"Users can now use /{command_name} to join this group."
-        )
-        logger.info(f"Added lecture command: /{command_name} -> {group_link} ({description})")
-        
-    except Exception as e:
-        logger.error(f"Addlecture command error: {e}")
-        await update.message.reply_text("⚠️ Failed to add lecture command. Please try again.")
-
-# Admin command to remove lecture command
-@restricted
-async def remove_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        user_id = update.effective_user.id
-        logger.info(f"Removelecture command from user: {user_id}")
-        
-        if not await is_owner(user_id):
-            await update.message.reply_text("❌ This command is for bot owner only!")
-            logger.warning(f"Unauthorized removelecture attempt by {user_id}")
-            return
-        
-        if not context.args:
-            await update.message.reply_text(
-                "⚠️ Please provide a command to remove.\n"
-                "Usage: /removelecture <command_name>\n"
-                "Example: /removelecture maths"
-            )
-            return
-        
-        command_name = context.args[0].lower().strip()
-        
-        # Remove from database
-        result = custom_commands_collection.delete_one({"command": command_name})
-        
-        if result.deleted_count > 0:
-            await update.message.reply_text(f"✅ Command /{command_name} has been removed.")
-            logger.info(f"Removed lecture command: /{command_name}")
-        else:
-            await update.message.reply_text(f"❌ Command /{command_name} not found.")
-            logger.info(f"Attempted to remove non-existent command: /{command_name}")
-        
-    except Exception as e:
-        logger.error(f"Removelecture command error: {e}")
-        await update.message.reply_text("⚠️ Failed to remove lecture command. Please try again.")
-
-# Handler for custom lecture commands - UPDATED WITH TUTORIAL VIDEO
-@restricted
-async def lecture_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        user_id = update.effective_user.id
-        command = update.message.text.split()[0][1:].lower()  # Remove slash
-        
-        logger.info(f"Lecture command from user: {user_id} - /{command}")
-        
-        # Find command in database
-        cmd_data = custom_commands_collection.find_one({"command": command})
-        if not cmd_data:
-            return  # Not a lecture command
-        
-        # Create inline buttons for group link and tutorial
-        keyboard = [
-            [InlineKeyboardButton(f"👉 Join {command.capitalize()} Group 👈", url=cmd_data["link"])],
-            [InlineKeyboardButton("📺 Watch Tutorial Video", url=TUTORIAL_VIDEO_LINK)]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        # Get description or use default
-        description = cmd_data.get("description", f"Join the {command} group")
-        
-        await update.message.reply_text(
-            f"📚 {description}\n\n"
-            "Click the button below to join the group:\n"
-            "Need help joining? Watch the tutorial video!",
-            reply_markup=reply_markup,
-            protect_content=True
-        )
-        logger.info(f"Sent lecture group link to user {user_id} for /{command}")
-    except Exception as e:
-        logger.error(f"Lecture command handler error: {e}")
-
-@restricted
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -602,12 +209,6 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Get user count
         user_count = users_collection.count_documents({})
         
-        # Get verified user count
-        verified_count = verified_users_collection.count_documents({})
-        
-        # Get lecture command count
-        command_count = custom_commands_collection.count_documents({})
-        
         # Get bot uptime
         uptime_seconds = time.time() - bot_start_time
         uptime_str = format_uptime(uptime_seconds)
@@ -621,232 +222,22 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Failed to get MongoDB version: {e}")
             mongo_version = "Unknown"
         
-        # Get verification requirements
-        verification_status = "No verification required"
-        if CHANNEL_ID and GROUP_ID:
-            verification_status = f"Requires both channel ({CHANNEL_ID}) and group ({GROUP_ID})"
-        elif CHANNEL_ID:
-            verification_status = f"Requires channel only ({CHANNEL_ID})"
-        elif GROUP_ID:
-            verification_status = f"Requires group only ({GROUP_ID})"
-        
         # Format stats message
         stats_message = (
-            "📊 Bot Statistics:\n\n"
-            f"🏓 Ping: {ping_time:.2f} ms\n"
-            f"👥 Total Users: {user_count}\n"
-            f"✅ Verified Users: {verified_count}\n"
-            f"📚 Lecture Groups: {command_count}\n"
-            f"⏱️ Uptime: {uptime_str}\n"
-            f"🔐 Verification: {verification_status}\n\n"
-            f"🐍 Python: {python_version}\n"
-            f"🍃 MongoDB: {mongo_version}"
+            "📊 𝙎𝙩𝙖𝙩𝙨 𝙤𝙛 '𝐓𝐄𝐀𝐌 𝐒𝐄𝐂𝐑𝐄𝐓 𝐔𝐒𝐄𝐑 𝐕𝐄𝐑𝐈𝐅𝐈𝐂𝐀𝐓𝐈𝐎𝐍':\n\n"
+            f"🏓 𝙋𝙞𝙣𝙜 𝙋𝙤𝙣𝙜: {ping_time:.2f} ms\n"
+            f"👥 𝙏𝙤𝙩𝙖𝙡 𝙐𝙨𝙚𝙧𝙨: {user_count}\n"
+            f"⚙️ 𝘽𝙤𝙩 𝙐𝙥𝙩𝙞𝙢𝙚: {uptime_str}\n\n"
+            f"🎨 𝙋𝙮𝙩𝙝𝙤𝙣 𝙑𝙚𝙧𝙨𝙞𝙤𝙣: {python_version}\n"
+            f"📑 𝙈𝙤𝙣𝙜𝙤 𝙑𝙚𝙧𝙨𝙞𝙤𝙣: {mongo_version}"
         )
         
         await test_message.edit_text(stats_message)
-        logger.info(f"Admin stats request: {user_count} users, {verified_count} verified, {command_count} commands")
+        logger.info(f"Admin stats request: {user_count} users")
         
     except Exception as e:
         logger.error(f"Stats command error: {e}")
 
-# Function to run broadcast in a separate thread
-def run_broadcast(context, user_id, total_users, users, progress_msg, replied_message=None, is_forward=False):
-    try:
-        success_count = 0
-        failed_count = 0
-        
-        with broadcast_lock:
-            active_broadcasts[user_id] = {
-                "cancelled": False,
-                "progress": 0,
-                "total": total_users,
-                "progress_msg": progress_msg,
-                "thread": threading.current_thread()
-            }
-        
-        # Function to send message to a user
-        async def send_to_user(user_data):
-            nonlocal success_count, failed_count
-            
-            if active_broadcasts.get(user_id, {}).get("cancelled", False):
-                return False
-                
-            try:
-                if is_forward and replied_message:
-                    # Forward the message
-                    await context.bot.forward_message(
-                        chat_id=user_data['user_id'],
-                        from_chat_id=replied_message.chat_id,
-                        message_id=replied_message.message_id
-                    )
-                    success_count += 1
-                    return True
-                elif replied_message:
-                    # Send the replied message as-is
-                    if replied_message.text:
-                        await context.bot.send_message(
-                            chat_id=user_data['user_id'],
-                            text=replied_message.text,
-                            entities=replied_message.entities,
-                            parse_mode=None,
-                            protect_content=True,
-                            disable_web_page_preview=True
-                        )
-                    elif replied_message.photo:
-                        await context.bot.send_photo(
-                            chat_id=user_data['user_id'],
-                            photo=replied_message.photo[-1].file_id,
-                            caption=replied_message.caption,
-                            caption_entities=replied_message.caption_entities,
-                            parse_mode=None,
-                            protect_content=True
-                        )
-                    elif replied_message.video:
-                        await context.bot.send_video(
-                            chat_id=user_data['user_id'],
-                            video=replied_message.video.file_id,
-                            caption=replied_message.caption,
-                            caption_entities=replied_message.caption_entities,
-                            parse_mode=None,
-                            protect_content=True
-                        )
-                    elif replied_message.document:
-                        await context.bot.send_document(
-                            chat_id=user_data['user_id'],
-                            document=replied_message.document.file_id,
-                            caption=replied_message.caption,
-                            caption_entities=replied_message.caption_entities,
-                            parse_mode=None,
-                            protect_content=True
-                        )
-                    elif replied_message.audio:
-                        await context.bot.send_audio(
-                            chat_id=user_data['user_id'],
-                            audio=replied_message.audio.file_id,
-                            caption=replied_message.caption,
-                            caption_entities=replied_message.caption_entities,
-                            parse_mode=None,
-                            protect_content=True
-                        )
-                    elif replied_message.voice:
-                        await context.bot.send_voice(
-                            chat_id=user_data['user_id'],
-                            voice=replied_message.voice.file_id,
-                            caption=replied_message.caption,
-                            caption_entities=replied_message.caption_entities,
-                            parse_mode=None,
-                            protect_content=True
-                        )
-                    elif replied_message.sticker:
-                        await context.bot.send_sticker(
-                            chat_id=user_data['user_id'],
-                            sticker=replied_message.sticker.file_id,
-                            protect_content=True
-                        )
-                    else:
-                        # Fallback: forward the message
-                        await context.bot.forward_message(
-                            chat_id=user_data['user_id'],
-                            from_chat_id=replied_message.chat_id,
-                            message_id=replied_message.message_id,
-                            protect_content=True
-                        )
-                    success_count += 1
-                    return True
-                else:
-                    # Send text message from command arguments
-                    message = ' '.join(context.args)
-                    await context.bot.send_message(
-                        chat_id=user_data['user_id'],
-                        text=message,
-                        protect_content=True,
-                        disable_web_page_preview=True
-                    )
-                    success_count += 1
-                    return True
-                    
-            except Exception as e:
-                logger.error(f"Failed to send to user {user_data['user_id']}: {e}")
-                failed_count += 1
-                return False
-        
-        # Create a new event loop for this thread
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        # Send messages to users
-        for i, user in enumerate(users):
-            if active_broadcasts.get(user_id, {}).get("cancelled", False):
-                logger.info(f"Broadcast cancelled by user {user_id}")
-                break
-                
-            # Run the async function in the thread's event loop
-            loop.run_until_complete(send_to_user(user))
-            
-            # Update progress every 10 sends
-            if (i + 1) % 10 == 0 or (i + 1) == total_users:
-                with broadcast_lock:
-                    if user_id in active_broadcasts:
-                        active_broadcasts[user_id]["progress"] = i + 1
-                
-                # Update progress message
-                try:
-                    loop.run_until_complete(context.bot.edit_message_text(
-                        chat_id=progress_msg.chat_id,
-                        message_id=progress_msg.message_id,
-                        text=(
-                            f"📢 Broadcasting to {total_users} users...\n"
-                            f"✅ Success: {success_count}\n"
-                            f"❌ Failed: {failed_count}\n"
-                            f"📊 Progress: {i + 1}/{total_users} ({((i + 1) / total_users * 100):.1f}%)\n\n"
-                            f"To cancel, use /cancelbroadcast"
-                        )
-                    ))
-                except Exception as e:
-                    logger.error(f"Failed to update progress message: {e}")
-                
-                # Small delay to avoid rate limiting
-                time.sleep(1)  # Increased delay to reduce load
-        
-        # Final update
-        try:
-            if active_broadcasts.get(user_id, {}).get("cancelled", False):
-                final_message = (
-                    f"🚫 Broadcast cancelled!\n"
-                    f"📢 Sent to: {success_count + failed_count} users\n"
-                    f"✅ Success: {success_count}\n"
-                    f"❌ Failed: {failed_count}"
-                )
-            else:
-                final_message = (
-                    f"🎉 Broadcast completed!\n"
-                    f"📢 Sent to: {total_users} users\n"
-                    f"✅ Success: {success_count}\n"
-                    f"❌ Failed: {failed_count}"
-                )
-            
-            loop.run_until_complete(context.bot.edit_message_text(
-                chat_id=progress_msg.chat_id,
-                message_id=progress_msg.message_id,
-                text=final_message
-            ))
-        except Exception as e:
-            logger.error(f"Failed to update final message: {e}")
-        
-        # Clean up
-        with broadcast_lock:
-            if user_id in active_broadcasts:
-                del active_broadcasts[user_id]
-                
-        loop.close()
-                
-    except Exception as e:
-        logger.error(f"Broadcast thread error: {e}")
-        with broadcast_lock:
-            if user_id in active_broadcasts:
-                del active_broadcasts[user_id]
-
-@restricted
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -857,117 +248,55 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Unauthorized broadcast attempt by {user_id}")
             return
         
-        # Check if message is a reply
-        replied_message = update.message.reply_to_message
-        
-        if not replied_message and not context.args:
+        if not context.args:
             await update.message.reply_text(
-                "⚠️ Please provide a message to broadcast or reply to a message.\n"
-                "Usage: /broadcast <your message> OR reply to a message with /broadcast"
+                "⚠️ Please provide a message to broadcast.\n"
+                "Usage: /broadcast <your message>"
             )
             return
         
+        message = ' '.join(context.args)
         total_users = users_collection.count_documents({})
-        users = list(users_collection.find({}))
+        success_count = 0
+        failed_count = 0
         
         progress_msg = await update.message.reply_text(
             f"📢 Starting broadcast to {total_users} users...\n"
-            f"✅ Success: 0\n"
-            f"❌ Failed: 0\n"
-            f"📊 Progress: 0/{total_users} (0.0%)\n\n"
-            f"To cancel, use /cancelbroadcast"
+            f"✅ Success: {success_count}\n"
+            f"❌ Failed: {failed_count}"
         )
         
-        # Start broadcast in a separate thread
-        thread = threading.Thread(
-            target=run_broadcast,
-            args=(context, user_id, total_users, users, progress_msg, replied_message, False)
-        )
-        thread.daemon = True
-        thread.start()
+        for user in users_collection.find():
+            try:
+                await context.bot.send_message(
+                    chat_id=user['user_id'],
+                    text=message
+                )
+                success_count += 1
+                
+                # Update progress every 10 sends
+                if success_count % 10 == 0:
+                    await progress_msg.edit_text(
+                        f"📢 Broadcasting to {total_users} users...\n"
+                        f"✅ Success: {success_count}\n"
+                        f"❌ Failed: {failed_count}"
+                    )
+            except Exception as e:
+                failed_count += 1
+                logger.error(f"Failed to send to user {user['user_id']}: {e}")
         
-        logger.info(f"Started broadcast thread for user {user_id}")
+        await progress_msg.edit_text(
+            f"🎉 Broadcast completed!\n"
+            f"📢 Sent to: {total_users} users\n"
+            f"✅ Success: {success_count}\n"
+            f"❌ Failed: {failed_count}"
+        )
+        logger.info(f"Broadcast completed. Success: {success_count}, Failed: {failed_count}")
         
     except Exception as e:
         logger.error(f"Broadcast command error: {e}")
         await update.message.reply_text("⚠️ An error occurred during broadcast.")
 
-@restricted
-async def fcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        user_id = update.effective_user.id
-        logger.info(f"Fcast command from user: {user_id}")
-        
-        if not await is_owner(user_id):
-            await update.message.reply_text("❌ This command is for bot owner only!")
-            logger.warning(f"Unauthorized fcast attempt by {user_id}")
-            return
-        
-        # Check if message is a reply
-        replied_message = update.message.reply_to_message
-        
-        if not replied_message:
-            await update.message.reply_text(
-                "⚠️ Please reply to a message with /fcast to forward it."
-            )
-            return
-        
-        total_users = users_collection.count_documents({})
-        users = list(users_collection.find({}))
-        
-        progress_msg = await update.message.reply_text(
-            f"📢 Starting forward broadcast to {total_users} users...\n"
-            f"✅ Success: 0\n"
-            f"❌ Failed: 0\n"
-            f"📊 Progress: 0/{total_users} (0.0%)\n\n"
-            f"To cancel, use /cancelbroadcast"
-        )
-        
-        # Start forward broadcast in a separate thread
-        thread = threading.Thread(
-            target=run_broadcast,
-            args=(context, user_id, total_users, users, progress_msg, replied_message, True)
-        )
-        thread.daemon = True
-        thread.start()
-        
-        logger.info(f"Started forward broadcast thread for user {user_id}")
-        
-    except Exception as e:
-        logger.error(f"Fcast command error: {e}")
-        await update.message.reply_text("⚠️ An error occurred during forward broadcast.")
-
-# Command to cancel broadcast
-@restricted
-async def cancel_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        user_id = update.effective_user.id
-        logger.info(f"Cancelbroadcast command from user: {user_id}")
-        
-        if not await is_owner(user_id):
-            await update.message.reply_text("❌ This command is for bot owner only!")
-            logger.warning(f"Unauthorized cancelbroadcast attempt by {user_id}")
-            return
-        
-        with broadcast_lock:
-            if user_id in active_broadcasts:
-                active_broadcasts[user_id]["cancelled"] = True
-                await update.message.reply_text("✅ Broadcast cancellation requested!")
-                logger.info(f"Broadcast cancelled by user {user_id}")
-                
-                # Wait a moment for the thread to finish
-                time.sleep(1)
-                
-                # Clean up the broadcast entry
-                if user_id in active_broadcasts:
-                    del active_broadcasts[user_id]
-            else:
-                await update.message.reply_text("❌ No active broadcast to cancel!")
-                
-    except Exception as e:
-        logger.error(f"Cancel broadcast command error: {e}")
-
-@restricted
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -975,36 +304,19 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         commands = [
             "/start - Begin using the bot",
-            "/lecture - Show all lecture groups",
+            "/link - Get community group link",
             "/help - Show this help message"
         ]
-        
-        # Create inline button for tutorial video
-        tutorial_button = InlineKeyboardButton(
-            "📺 Watch Tutorial Video", 
-            url=TUTORIAL_VIDEO_LINK
-        )
-        reply_markup = InlineKeyboardMarkup([[tutorial_button]])
         
         if is_admin:
             admin_commands = [
                 "\n\n👑 Admin Commands:",
-                "/addlecture <name> <link> <description> - Add new lecture group",
-                "/removelecture <name> - Remove a lecture group",
                 "/stats - View bot statistics",
-                "/broadcast <message> - Send message to all users (or reply to a message)",
-                "/fcast - Forward a message to all users (preserves original sender)",
-                "/cancelbroadcast - Cancel an ongoing broadcast"
+                "/broadcast <message> - Send message to all users"
             ]
             commands.extend(admin_commands)
         
-        help_message = "\n".join(commands) + "\n\nNeed help using the bot? Watch our tutorial video!"
-        
-        await update.message.reply_text(
-            help_message,
-            reply_markup=reply_markup,
-            protect_content=True
-        )
+        await update.message.reply_text("\n".join(commands))
         logger.info(f"Help command sent to {update.effective_user.id}")
     except Exception as e:
         logger.error(f"Help command error: {e}")
@@ -1019,60 +331,20 @@ def main():
         flask_thread.start()
         logger.info("Flask health check server started on port 8080")
 
-        # Log verification requirements
-        if not REQUIRES_VERIFICATION:
-            logger.info("No verification required - bot will work without channel/group membership")
-        else:
-            if CHANNEL_ID and GROUP_ID:
-                logger.info(f"Verification required for both channel {CHANNEL_ID} and group {GROUP_ID}")
-            elif CHANNEL_ID:
-                logger.info(f"Verification required for channel {CHANNEL_ID}")
-            else:
-                logger.info(f"Verification required for group {GROUP_ID}")
-
-        # Configure connection pool settings to prevent timeout errors
-        request = HTTPXRequest(
-            connection_pool_size=50,  # Increased connection pool size
-            read_timeout=60.0,        # Increased read timeout
-            write_timeout=60.0,       # Increased write timeout
-            connect_timeout=60.0,     # Increased connection timeout
-            pool_timeout=60.0         # Increased pool timeout
-        )
-        
-        # Start Telegram bot with custom request configuration
-        logger.info("Starting bot application with enhanced connection pool...")
-        application = (
-            ApplicationBuilder()
-            .token(TOKEN)
-            .request(request)
-            .concurrent_updates(True)  # Enable concurrent updates
-            .build()
-        )
+        # Start Telegram bot
+        logger.info("Starting bot application...")
+        application = ApplicationBuilder().token(TOKEN).build()
         
         # Add handlers
         application.add_handler(CommandHandler("start", start))
-        application.add_handler(CommandHandler("lecture", lecture))
-        application.add_handler(CommandHandler("addlecture", add_lecture))
-        application.add_handler(CommandHandler("removelecture", remove_lecture))
+        application.add_handler(CommandHandler("link", link))
         application.add_handler(CommandHandler("stats", stats))
         application.add_handler(CommandHandler("broadcast", broadcast))
-        application.add_handler(CommandHandler("fcast", fcast))
-        application.add_handler(CommandHandler("cancelbroadcast", cancel_broadcast))
         application.add_handler(CommandHandler("help", help_command))
         application.add_handler(CallbackQueryHandler(check_membership_callback))
         
-        # Add handler for custom lecture commands
-        application.add_handler(MessageHandler(filters.COMMAND, lecture_command_handler))
-        
         logger.info("Bot is now polling...")
-        application.run_polling(
-            allowed_updates=Update.ALL_TYPES,
-            read_timeout=30,  # Increase polling read timeout
-            write_timeout=30, # Increase polling write timeout
-            connect_timeout=30, # Increase polling connect timeout
-            pool_timeout=30,    # Increase polling pool timeout
-            drop_pending_updates=True  # Drop pending updates on startup
-        )
+        application.run_polling()
     except Exception as e:
         logger.critical(f"Fatal error in main: {e}")
         exit(1)
