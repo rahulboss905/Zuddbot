@@ -36,6 +36,10 @@ logger = logging.getLogger(__name__)
 # Bot start time for uptime calculation
 bot_start_time = time.time()
 
+# Global variables for broadcast control
+broadcast_active = False
+broadcast_cancelled = False
+
 # Helper function to format uptime
 def format_uptime(seconds):
     days, seconds = divmod(seconds, 86400)
@@ -589,6 +593,8 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @restricted  # Add restricted decorator :cite[1]:cite[7]
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global broadcast_active, broadcast_cancelled
+    
     try:
         user_id = update.effective_user.id
         logger.info(f"Broadcast command from user: {user_id}")
@@ -596,6 +602,11 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await is_owner(user_id):
             await update.message.reply_text("❌ This command is for bot owner only!")
             logger.warning(f"Unauthorized broadcast attempt by {user_id}")
+            return
+        
+        # Check if broadcast is already active
+        if broadcast_active:
+            await update.message.reply_text("⚠️ A broadcast is already in progress. Please wait for it to finish or use /cancel to stop it.")
             return
         
         # Check if message is a reply
@@ -615,8 +626,13 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         progress_msg = await update.message.reply_text(
             f"📢 Starting broadcast to {total_users} users...\n"
             f"✅ Success: {success_count}\n"
-            f"❌ Failed: {failed_count}"
+            f"❌ Failed: {failed_count}\n\n"
+            f"⏸️ Use /cancel to stop the broadcast"
         )
+        
+        # Set broadcast as active
+        broadcast_active = True
+        broadcast_cancelled = False
         
         # Function to send message to a user
         async def send_to_user(user_id, send_func, *args, **kwargs):
@@ -628,6 +644,18 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return False
         
         for user in users_collection.find():
+            # Check if broadcast was cancelled
+            if broadcast_cancelled:
+                await progress_msg.edit_text(
+                    f"❌ Broadcast cancelled!\n"
+                    f"📢 Sent to: {success_count + failed_count} users\n"
+                    f"✅ Success: {success_count}\n"
+                    f"❌ Failed: {failed_count}"
+                )
+                broadcast_active = False
+                broadcast_cancelled = False
+                return
+            
             try:
                 if replied_message:
                     # Forward the replied message as-is
@@ -728,7 +756,8 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await progress_msg.edit_text(
                         f"📢 Broadcasting to {total_users} users...\n"
                         f"✅ Success: {success_count}\n"
-                        f"❌ Failed: {failed_count}"
+                        f"❌ Failed: {failed_count}\n\n"
+                        f"⏸️ Use /cancel to stop the broadcast"
                     )
                     
                 # Small delay to avoid rate limiting
@@ -746,9 +775,139 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         logger.info(f"Broadcast completed. Success: {success_count}, Failed: {failed_count}")
         
+        # Reset broadcast status
+        broadcast_active = False
+        
     except Exception as e:
         logger.error(f"Broadcast command error: {e}")
         await update.message.reply_text("⚠️ An error occurred during broadcast.")
+        broadcast_active = False
+
+# New command to forward messages to all users
+@restricted  # Add restricted decorator :cite[1]:cite[7]
+async def fcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global broadcast_active, broadcast_cancelled
+    
+    try:
+        user_id = update.effective_user.id
+        logger.info(f"Fcast command from user: {user_id}")
+        
+        if not await is_owner(user_id):
+            await update.message.reply_text("❌ This command is for bot owner only!")
+            logger.warning(f"Unauthorized fcast attempt by {user_id}")
+            return
+        
+        # Check if broadcast is already active
+        if broadcast_active:
+            await update.message.reply_text("⚠️ A broadcast is already in progress. Please wait for it to finish or use /cancel to stop it.")
+            return
+        
+        # Check if message is a reply
+        replied_message = update.message.reply_to_message
+        
+        if not replied_message:
+            await update.message.reply_text(
+                "⚠️ Please reply to a message to forward it.\n"
+                "Usage: Reply to a message with /fcast"
+            )
+            return
+        
+        total_users = users_collection.count_documents({})
+        success_count = 0
+        failed_count = 0
+        
+        progress_msg = await update.message.reply_text(
+            f"📢 Starting forward to {total_users} users...\n"
+            f"✅ Success: {success_count}\n"
+            f"❌ Failed: {failed_count}\n\n"
+            f"⏸️ Use /cancel to stop the forward"
+        )
+        
+        # Set broadcast as active
+        broadcast_active = True
+        broadcast_cancelled = False
+        
+        for user in users_collection.find():
+            # Check if broadcast was cancelled
+            if broadcast_cancelled:
+                await progress_msg.edit_text(
+                    f"❌ Forward cancelled!\n"
+                    f"📢 Sent to: {success_count + failed_count} users\n"
+                    f"✅ Success: {success_count}\n"
+                    f"❌ Failed: {failed_count}"
+                )
+                broadcast_active = False
+                broadcast_cancelled = False
+                return
+            
+            try:
+                # Forward the message
+                await context.bot.forward_message(
+                    chat_id=user['user_id'],
+                    from_chat_id=replied_message.chat_id,
+                    message_id=replied_message.message_id,
+                    protect_content=True
+                )
+                success_count += 1
+                
+                # Update progress every 10 sends
+                if (success_count + failed_count) % 10 == 0:
+                    await progress_msg.edit_text(
+                        f"📢 Forwarding to {total_users} users...\n"
+                        f"✅ Success: {success_count}\n"
+                        f"❌ Failed: {failed_count}\n\n"
+                        f"⏸️ Use /cancel to stop the forward"
+                    )
+                    
+                # Small delay to avoid rate limiting
+                time.sleep(0.1)
+                    
+            except Exception as e:
+                failed_count += 1
+                logger.error(f"Failed to forward to user {user['user_id']}: {e}")
+        
+        await progress_msg.edit_text(
+            f"🎉 Forward completed!\n"
+            f"📢 Sent to: {total_users} users\n"
+            f"✅ Success: {success_count}\n"
+            f"❌ Failed: {failed_count}"
+        )
+        logger.info(f"Forward completed. Success: {success_count}, Failed: {failed_count}")
+        
+        # Reset broadcast status
+        broadcast_active = False
+        
+    except Exception as e:
+        logger.error(f"Fcast command error: {e}")
+        await update.message.reply_text("⚠️ An error occurred during forward.")
+        broadcast_active = False
+
+# Command to cancel ongoing broadcast
+@restricted  # Add restricted decorator :cite[1]:cite[7]
+async def cancel_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global broadcast_active, broadcast_cancelled
+    
+    try:
+        user_id = update.effective_user.id
+        logger.info(f"Cancel command from user: {user_id}")
+        
+        if not await is_owner(user_id):
+            await update.message.reply_text("❌ This command is for bot owner only!")
+            logger.warning(f"Unauthorized cancel attempt by {user_id}")
+            return
+        
+        if not broadcast_active:
+            await update.message.reply_text("❌ No active broadcast to cancel!")
+            return
+        
+        # Set cancellation flag
+        broadcast_cancelled = True
+        await update.message.reply_text("⏹️ Broadcast cancellation requested. It may take a moment to stop.")
+        logger.info(f"Broadcast cancellation requested by {user_id}")
+        
+    except Exception as e:
+        logger.error(f"Cancel command error: {e}")
+        await update.message.reply_text("⚠️ An error occurred while trying to cancel.")
 
 @restricted  # Add restricted decorator :cite[1]:cite[7]
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -775,7 +934,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "/addlecture <name> <link> <description> - Add new lecture group",
                 "/removelecture <name> - Remove a lecture group",
                 "/stats - View bot statistics",
-                "/broadcast <message> - Send message to all users (or reply to a message)"
+                "/broadcast <message> - Send message to all users (or reply to a message)",
+                "/fcast - Forward a message to all users (reply to a message)",
+                "/cancel - Cancel ongoing broadcast/forward"
             ]
             commands.extend(admin_commands)
         
@@ -822,6 +983,8 @@ def main():
         application.add_handler(CommandHandler("removelecture", remove_lecture))
         application.add_handler(CommandHandler("stats", stats))
         application.add_handler(CommandHandler("broadcast", broadcast))
+        application.add_handler(CommandHandler("fcast", fcast))
+        application.add_handler(CommandHandler("cancel", cancel_broadcast))
         application.add_handler(CommandHandler("help", help_command))
         application.add_handler(CallbackQueryHandler(check_membership_callback))
         
