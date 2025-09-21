@@ -3,6 +3,7 @@ import logging
 import threading
 import time
 import sys
+import asyncio
 from flask import Flask, Response
 from pymongo import MongoClient
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -36,9 +37,12 @@ logger = logging.getLogger(__name__)
 # Bot start time for uptime calculation
 bot_start_time = time.time()
 
-# Global variables for broadcast control
-broadcast_active = False
-broadcast_cancelled = False
+# Global broadcast control
+broadcast_control = {
+    "is_broadcasting": False,
+    "cancel_requested": False,
+    "current_broadcast_user": None
+}
 
 # Helper function to format uptime
 def format_uptime(seconds):
@@ -117,7 +121,7 @@ async def check_membership(user_id: int, context: ContextTypes.DEFAULT_TYPE, cha
                 status = member.status
                 logger.info(f"Membership check for user {user_id} in {chat_id}: {status} (attempt {attempt+1})")
                 
-                # Check all possible member statuses :cite[4]:cite[9]
+                # Check all possible member statuses
                 return status in ['member', 'administrator', 'creator', 'restricted']
             except Exception as e:
                 logger.warning(f"Standard membership check failed for {chat_id}: {e}")
@@ -138,12 +142,12 @@ async def check_membership(user_id: int, context: ContextTypes.DEFAULT_TYPE, cha
                         return False
                     
                     # Wait before retrying
-                    time.sleep(1)
+                    await asyncio.sleep(1)
         except Exception as e:
             logger.error(f"Membership check error for {chat_id}: {e}")
             if attempt == max_retries - 1:
                 return False
-            time.sleep(1)
+            await asyncio.sleep(1)
     
     return False
 
@@ -166,7 +170,7 @@ async def check_all_memberships(user_id: int, context: ContextTypes.DEFAULT_TYPE
     
     return all(results)
 
-# Add restricted decorator to limit bot access :cite[1]:cite[7]
+# Add restricted decorator to limit bot access
 def restricted(func):
     from functools import wraps
     
@@ -206,9 +210,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Check if verification is required
         if not REQUIRES_VERIFICATION:
             welcome_message = (
-                "╭───❖━❀🌟❀━❖───╮\n"
+                "╭───▊┌─🌟─┐▊───╮\n"
                 f"  𝗪𝗲𝗹𝗰𝗼𝗺𝗲, {first_name}! 🎉\n"
-                "╰───❖━❀🌟❀━❖───╯\n\n"
+                "╰───▊└─🌟─┘▊───╯\n\n"
                 "🎯 𝗪𝗲'𝗿𝗲 𝗴𝗹𝗮𝗱 𝘁𝗼 𝗵𝗮𝘃𝗲 𝘆𝗼𝘂 𝗵𝗲𝗿𝗲.\n\n"
                 "➡️ 𝗨𝘀𝗲 𝘁𝗵𝗲𝘀𝗲 𝗰𝗼𝗺𝗺𝗮𝗻𝗱𝘀:\n\n"
                 "📚 `/lecture` - Show all available lecture groups\n"
@@ -225,9 +229,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_member = await check_all_memberships(user_id, context)
         if is_member:
             welcome_message = (
-                "╭───❖━❀🌟❀━❖───╮\n"
+                "╭───▊┌─🌟─┐▊───╮\n"
                 f"  𝗪𝗲𝗹𝗰𝗼𝗺𝗲, {first_name}! 🎉\n"
-                "╰───❖━❀🌟❀━❖───╯\n\n"
+                "╰───▊└─🌟─┘▊───╯\n\n"
                 "🙏 𝗧𝗵𝗮𝗻𝗸 𝘆𝗼𝘂 𝗳𝗼𝗿 𝘀𝘂𝗯𝘀𝗰𝗿𝗶𝗯𝗶𝗻𝗴 𝘁𝗼 𝗼𝘂𝗿 𝗰𝗼𝗺𝗺𝘂𝗻𝗶𝘁𝘆!\n"
                 "🎯 𝗪𝗲'𝗿𝗲 𝗴𝗹𝗮𝗱 𝘁𝗼 𝗵𝗮𝘃𝗲 𝘆𝗼𝘂 𝗵𝗲𝗿𝗲.\n\n"
                 "➡️ 𝗨𝘀𝗲 𝘁𝗵𝗲𝘀𝗲 𝗰𝗼𝗺𝗺𝗮𝗻𝗱𝘀:\n\n"
@@ -272,10 +276,10 @@ async def send_verification_request(update: Update, context: ContextTypes.DEFAUL
         join_message = (
             "⚠️ Please Join Our Channel and Group to Use This Bot!\n\n"
             "📢 Our community provides:\n"
-            "— 📝 Important Updates\n"  
-            "— 🎁 Free Resources\n"  
-            "— 📚 Daily Quiz & Guidance\n"  
-            "— ❗ Exclusive Content\n\n"
+            "━ 📝 Important Updates\n"  
+            "━ 🎁 Free Resources\n"  
+            "━ 📚 Daily Quiz & Guidance\n"  
+            "━ ⭐ Exclusive Content\n\n"
             "✅ After Joining, tap \"I've Joined\" below to continue!\n\n"
             "🔒 Invite links expire in 5 minutes\n\n"
             "ℹ️ If you've already joined, please wait a moment and try again. "
@@ -285,10 +289,10 @@ async def send_verification_request(update: Update, context: ContextTypes.DEFAUL
         join_message = (
             "⚠️ Please Join Our Channel to Use This Bot!\n\n"
             "📢 Our channel provides:\n"
-            "— 📝 Important Updates\n"  
-            "— 🎁 Free Resources\n"  
-            "— 📚 Daily Quiz & Guidance\n"  
-            "— ❗ Exclusive Content\n\n"
+            "━ 📝 Important Updates\n"  
+            "━ 🎁 Free Resources\n"  
+            "━ 📚 Daily Quiz & Guidance\n"  
+            "━ ⭐ Exclusive Content\n\n"
             "✅ After Joining, tap \"I've Joined\" below to continue!\n\n"
             "🔒 Invite link expires in 5 minutes\n\n"
             "ℹ️ If you've already joined, please wait a moment and try again. "
@@ -298,10 +302,10 @@ async def send_verification_request(update: Update, context: ContextTypes.DEFAUL
         join_message = (
             "⚠️ Please Join Our Group to Use This Bot!\n\n"
             "📢 Our group provides:\n"
-            "— 📝 Important Updates\n"  
-            "— 🎁 Free Resources\n"  
-            "— 📚 Daily Quiz & Guidance\n"  
-            "— ❗ Exclusive Content\n\n"
+            "━ 📝 Important Updates\n"  
+            "━ 🎁 Free Resources\n"  
+            "━ 📚 Daily Quiz & Guidance\n"  
+            "━ ⭐ Exclusive Content\n\n"
             "✅ After Joining, tap \"I've Joined\" below to continue!\n\n"
             "🔒 Invite link expires in 5 minutes\n\n"
             "ℹ️ If you've already joined, please wait a moment and try again. "
@@ -369,7 +373,7 @@ async def check_membership_callback(update: Update, context: ContextTypes.DEFAUL
         await query.edit_message_text("⚠️ Error verifying membership. Please try again.")
 
 # Unified lecture command to list all custom commands with descriptions
-@restricted  # Add restricted decorator :cite[1]:cite[7]
+@restricted
 async def lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -402,7 +406,7 @@ async def lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Lecture command error: {e}")
 
 # Admin command to add new lecture group command with description
-@restricted  # Add restricted decorator :cite[1]:cite[7]
+@restricted
 async def add_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -459,7 +463,7 @@ async def add_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Failed to add lecture command. Please try again.")
 
 # Admin command to remove lecture command
-@restricted  # Add restricted decorator :cite[1]:cite[7]
+@restricted
 async def remove_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -495,7 +499,7 @@ async def remove_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Failed to remove lecture command. Please try again.")
 
 # Handler for custom lecture commands - UPDATED WITH TUTORIAL VIDEO
-@restricted  # Add restricted decorator :cite[1]:cite[7]
+@restricted
 async def lecture_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -529,7 +533,7 @@ async def lecture_command_handler(update: Update, context: ContextTypes.DEFAULT_
     except Exception as e:
         logger.error(f"Lecture command handler error: {e}")
 
-@restricted  # Add restricted decorator :cite[1]:cite[7]
+@restricted
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -542,7 +546,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Calculate ping
         start_time = time.time()
-        test_message = await update.message.reply_text("🏓 Pinging...")
+        test_message = await update.message.reply_text("🔍 Pinging...")
         ping_time = (time.time() - start_time) * 1000  # in milliseconds
         
         # Get user count
@@ -576,7 +580,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Format stats message
         stats_message = (
             "📊 Bot Statistics:\n\n"
-            f"🏓 Ping: {ping_time:.2f} ms\n"
+            f"🔍 Ping: {ping_time:.2f} ms\n"
             f"👥 Total Users: {user_count}\n"
             f"📚 Lecture Groups: {command_count}\n"
             f"⏱️ Uptime: {uptime_str}\n"
@@ -591,10 +595,124 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Stats command error: {e}")
 
-@restricted  # Add restricted decorator :cite[1]:cite[7]
+# NEW: Forward command (fcat) to forward messages to all users
+@restricted
+async def fcat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        user_id = update.effective_user.id
+        logger.info(f"Fcat command from user: {user_id}")
+        
+        if not await is_owner(user_id):
+            await update.message.reply_text("❌ This command is for bot owner only!")
+            logger.warning(f"Unauthorized fcat attempt by {user_id}")
+            return
+        
+        # Check if message is a reply
+        replied_message = update.message.reply_to_message
+        
+        if not replied_message:
+            await update.message.reply_text(
+                "⚠️ Please reply to a message you want to forward to all users.\n"
+                "Usage: Reply to any message with /fcat"
+            )
+            return
+        
+        # Check if broadcasting is already in progress
+        if broadcast_control["is_broadcasting"]:
+            await update.message.reply_text(
+                "⚠️ Another broadcast is already in progress. Please wait for it to complete."
+            )
+            return
+        
+        # Set broadcasting status
+        broadcast_control["is_broadcasting"] = True
+        broadcast_control["cancel_requested"] = False
+        broadcast_control["current_broadcast_user"] = user_id
+        
+        total_users = users_collection.count_documents({})
+        success_count = 0
+        failed_count = 0
+        
+        # Create cancel button
+        cancel_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Cancel Broadcast", callback_data="cancel_broadcast")]
+        ])
+        
+        progress_msg = await update.message.reply_text(
+            f"📢 Starting forward to {total_users} users...\n"
+            f"✅ Success: {success_count}\n"
+            f"❌ Failed: {failed_count}",
+            reply_markup=cancel_keyboard
+        )
+        
+        # Forward message to all users
+        for user in users_collection.find():
+            # Check for cancel request
+            if broadcast_control["cancel_requested"]:
+                await progress_msg.edit_text(
+                    f"🛑 Broadcast cancelled!\n"
+                    f"📢 Processed: {success_count + failed_count}/{total_users} users\n"
+                    f"✅ Success: {success_count}\n"
+                    f"❌ Failed: {failed_count}"
+                )
+                break
+            
+            try:
+                await context.bot.forward_message(
+                    chat_id=user['user_id'],
+                    from_chat_id=replied_message.chat_id,
+                    message_id=replied_message.message_id
+                )
+                success_count += 1
+                logger.info(f"Forwarded message to user {user['user_id']}")
+                
+            except Exception as e:
+                failed_count += 1
+                logger.error(f"Failed to forward to user {user['user_id']}: {e}")
+            
+            # Update progress every 10 sends
+            if (success_count + failed_count) % 10 == 0:
+                try:
+                    await progress_msg.edit_text(
+                        f"📢 Forwarding to {total_users} users...\n"
+                        f"✅ Success: {success_count}\n"
+                        f"❌ Failed: {failed_count}",
+                        reply_markup=cancel_keyboard
+                    )
+                except Exception as edit_error:
+                    logger.error(f"Failed to update progress message: {edit_error}")
+                    
+            # Small delay to avoid rate limiting but keep bot responsive
+            await asyncio.sleep(0.05)
+        
+        # Final update
+        if not broadcast_control["cancel_requested"]:
+            await progress_msg.edit_text(
+                f"🎉 Forward completed!\n"
+                f"📢 Sent to: {total_users} users\n"
+                f"✅ Success: {success_count}\n"
+                f"❌ Failed: {failed_count}"
+            )
+        
+        # Reset broadcasting status
+        broadcast_control["is_broadcasting"] = False
+        broadcast_control["cancel_requested"] = False
+        broadcast_control["current_broadcast_user"] = None
+        
+        logger.info(f"Forward completed. Success: {success_count}, Failed: {failed_count}")
+        
+    except Exception as e:
+        logger.error(f"Fcat command error: {e}")
+        await update.message.reply_text("⚠️ An error occurred during forwarding.")
+        
+        # Reset broadcasting status on error
+        broadcast_control["is_broadcasting"] = False
+        broadcast_control["cancel_requested"] = False
+        broadcast_control["current_broadcast_user"] = None
+
+# Enhanced broadcast command with cancel functionality
+@restricted
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global broadcast_active, broadcast_cancelled
-    
     try:
         user_id = update.effective_user.id
         logger.info(f"Broadcast command from user: {user_id}")
@@ -604,9 +722,11 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Unauthorized broadcast attempt by {user_id}")
             return
         
-        # Check if broadcast is already active
-        if broadcast_active:
-            await update.message.reply_text("⚠️ A broadcast is already in progress. Please wait for it to finish or use /cancel to stop it.")
+        # Check if broadcasting is already in progress
+        if broadcast_control["is_broadcasting"]:
+            await update.message.reply_text(
+                "⚠️ Another broadcast is already in progress. Please wait for it to complete."
+            )
             return
         
         # Check if message is a reply
@@ -619,20 +739,26 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
+        # Set broadcasting status
+        broadcast_control["is_broadcasting"] = True
+        broadcast_control["cancel_requested"] = False
+        broadcast_control["current_broadcast_user"] = user_id
+        
         total_users = users_collection.count_documents({})
         success_count = 0
         failed_count = 0
         
+        # Create cancel button
+        cancel_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Cancel Broadcast", callback_data="cancel_broadcast")]
+        ])
+        
         progress_msg = await update.message.reply_text(
             f"📢 Starting broadcast to {total_users} users...\n"
             f"✅ Success: {success_count}\n"
-            f"❌ Failed: {failed_count}\n\n"
-            f"⏸️ Use /cancel to stop the broadcast"
+            f"❌ Failed: {failed_count}",
+            reply_markup=cancel_keyboard
         )
-        
-        # Set broadcast as active
-        broadcast_active = True
-        broadcast_cancelled = False
         
         # Function to send message to a user
         async def send_to_user(user_id, send_func, *args, **kwargs):
@@ -644,21 +770,19 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return False
         
         for user in users_collection.find():
-            # Check if broadcast was cancelled
-            if broadcast_cancelled:
+            # Check for cancel request
+            if broadcast_control["cancel_requested"]:
                 await progress_msg.edit_text(
-                    f"❌ Broadcast cancelled!\n"
-                    f"📢 Sent to: {success_count + failed_count} users\n"
+                    f"🛑 Broadcast cancelled!\n"
+                    f"📢 Processed: {success_count + failed_count}/{total_users} users\n"
                     f"✅ Success: {success_count}\n"
                     f"❌ Failed: {failed_count}"
                 )
-                broadcast_active = False
-                broadcast_cancelled = False
-                return
-            
+                break
+                
             try:
                 if replied_message:
-                    # Forward the replied message as-is
+                    # Send the replied message as-is
                     if replied_message.text:
                         success = await send_to_user(
                             user['user_id'], 
@@ -667,7 +791,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             entities=replied_message.entities,
                             parse_mode=None,
                             protect_content=True,
-                            disable_web_page_preview=True  # Disable link preview
+                            disable_web_page_preview=True
                         )
                     elif replied_message.photo:
                         success = await send_to_user(
@@ -743,7 +867,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         context.bot.send_message,
                         text=message,
                         protect_content=True,
-                        disable_web_page_preview=True  # Disable link preview
+                        disable_web_page_preview=True
                     )
                 
                 if success:
@@ -753,163 +877,93 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 # Update progress every 10 sends
                 if (success_count + failed_count) % 10 == 0:
-                    await progress_msg.edit_text(
-                        f"📢 Broadcasting to {total_users} users...\n"
-                        f"✅ Success: {success_count}\n"
-                        f"❌ Failed: {failed_count}\n\n"
-                        f"⏸️ Use /cancel to stop the broadcast"
-                    )
-                    
-                # Small delay to avoid rate limiting
-                time.sleep(0.1)
+                    try:
+                        await progress_msg.edit_text(
+                            f"📢 Broadcasting to {total_users} users...\n"
+                            f"✅ Success: {success_count}\n"
+                            f"❌ Failed: {failed_count}",
+                            reply_markup=cancel_keyboard
+                        )
+                    except Exception as edit_error:
+                        logger.error(f"Failed to update progress message: {edit_error}")
+                        
+                # Small delay to avoid rate limiting but keep bot responsive
+                await asyncio.sleep(0.05)
                     
             except Exception as e:
                 failed_count += 1
                 logger.error(f"Failed to send to user {user['user_id']}: {e}")
         
-        await progress_msg.edit_text(
-            f"🎉 Broadcast completed!\n"
-            f"📢 Sent to: {total_users} users\n"
-            f"✅ Success: {success_count}\n"
-            f"❌ Failed: {failed_count}"
-        )
-        logger.info(f"Broadcast completed. Success: {success_count}, Failed: {failed_count}")
+        # Final update
+        if not broadcast_control["cancel_requested"]:
+            await progress_msg.edit_text(
+                f"🎉 Broadcast completed!\n"
+                f"📢 Sent to: {total_users} users\n"
+                f"✅ Success: {success_count}\n"
+                f"❌ Failed: {failed_count}"
+            )
         
-        # Reset broadcast status
-        broadcast_active = False
+        # Reset broadcasting status
+        broadcast_control["is_broadcasting"] = False
+        broadcast_control["cancel_requested"] = False
+        broadcast_control["current_broadcast_user"] = None
+        
+        logger.info(f"Broadcast completed. Success: {success_count}, Failed: {failed_count}")
         
     except Exception as e:
         logger.error(f"Broadcast command error: {e}")
         await update.message.reply_text("⚠️ An error occurred during broadcast.")
-        broadcast_active = False
+        
+        # Reset broadcasting status on error
+        broadcast_control["is_broadcasting"] = False
+        broadcast_control["cancel_requested"] = False
+        broadcast_control["current_broadcast_user"] = None
 
-# New command to forward messages to all users
-@restricted  # Add restricted decorator :cite[1]:cite[7]
-async def fcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global broadcast_active, broadcast_cancelled
-    
+# Callback handler for cancel broadcast
+async def cancel_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        user_id = update.effective_user.id
-        logger.info(f"Fcast command from user: {user_id}")
+        query = update.callback_query
+        await query.answer()
+        user_id = query.from_user.id
         
+        # Check if user is authorized to cancel
         if not await is_owner(user_id):
-            await update.message.reply_text("❌ This command is for bot owner only!")
-            logger.warning(f"Unauthorized fcast attempt by {user_id}")
+            await query.answer("❌ Only bot owner can cancel broadcasts!", show_alert=True)
             return
         
-        # Check if broadcast is already active
-        if broadcast_active:
-            await update.message.reply_text("⚠️ A broadcast is already in progress. Please wait for it to finish or use /cancel to stop it.")
+        # Check if user is the one who started the broadcast
+        if broadcast_control["current_broadcast_user"] != user_id:
+            await query.answer("❌ You can only cancel broadcasts you started!", show_alert=True)
             return
         
-        # Check if message is a reply
-        replied_message = update.message.reply_to_message
-        
-        if not replied_message:
-            await update.message.reply_text(
-                "⚠️ Please reply to a message to forward it.\n"
-                "Usage: Reply to a message with /fcast"
-            )
-            return
-        
-        total_users = users_collection.count_documents({})
-        success_count = 0
-        failed_count = 0
-        
-        progress_msg = await update.message.reply_text(
-            f"📢 Starting forward to {total_users} users...\n"
-            f"✅ Success: {success_count}\n"
-            f"❌ Failed: {failed_count}\n\n"
-            f"⏸️ Use /cancel to stop the forward"
-        )
-        
-        # Set broadcast as active
-        broadcast_active = True
-        broadcast_cancelled = False
-        
-        for user in users_collection.find():
-            # Check if broadcast was cancelled
-            if broadcast_cancelled:
-                await progress_msg.edit_text(
-                    f"❌ Forward cancelled!\n"
-                    f"📢 Sent to: {success_count + failed_count} users\n"
-                    f"✅ Success: {success_count}\n"
-                    f"❌ Failed: {failed_count}"
-                )
-                broadcast_active = False
-                broadcast_cancelled = False
-                return
+        # Set cancel flag
+        if broadcast_control["is_broadcasting"]:
+            broadcast_control["cancel_requested"] = True
+            await query.answer("🛑 Broadcast cancellation requested!", show_alert=True)
+            logger.info(f"Broadcast cancellation requested by user {user_id}")
+        else:
+            await query.answer("ℹ️ No active broadcast to cancel.", show_alert=True)
             
-            try:
-                # Forward the message
-                await context.bot.forward_message(
-                    chat_id=user['user_id'],
-                    from_chat_id=replied_message.chat_id,
-                    message_id=replied_message.message_id,
-                    protect_content=True
-                )
-                success_count += 1
-                
-                # Update progress every 10 sends
-                if (success_count + failed_count) % 10 == 0:
-                    await progress_msg.edit_text(
-                        f"📢 Forwarding to {total_users} users...\n"
-                        f"✅ Success: {success_count}\n"
-                        f"❌ Failed: {failed_count}\n\n"
-                        f"⏸️ Use /cancel to stop the forward"
-                    )
-                    
-                # Small delay to avoid rate limiting
-                time.sleep(0.1)
-                    
-            except Exception as e:
-                failed_count += 1
-                logger.error(f"Failed to forward to user {user['user_id']}: {e}")
-        
-        await progress_msg.edit_text(
-            f"🎉 Forward completed!\n"
-            f"📢 Sent to: {total_users} users\n"
-            f"✅ Success: {success_count}\n"
-            f"❌ Failed: {failed_count}"
-        )
-        logger.info(f"Forward completed. Success: {success_count}, Failed: {failed_count}")
-        
-        # Reset broadcast status
-        broadcast_active = False
-        
     except Exception as e:
-        logger.error(f"Fcast command error: {e}")
-        await update.message.reply_text("⚠️ An error occurred during forward.")
-        broadcast_active = False
+        logger.error(f"Cancel broadcast callback error: {e}")
+        await query.answer("⚠️ Error processing cancel request.", show_alert=True)
 
-# Command to cancel ongoing broadcast
-@restricted  # Add restricted decorator :cite[1]:cite[7]
-async def cancel_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global broadcast_active, broadcast_cancelled
-    
+# Enhanced callback query handler
+async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        user_id = update.effective_user.id
-        logger.info(f"Cancel command from user: {user_id}")
+        query = update.callback_query
         
-        if not await is_owner(user_id):
-            await update.message.reply_text("❌ This command is for bot owner only!")
-            logger.warning(f"Unauthorized cancel attempt by {user_id}")
-            return
-        
-        if not broadcast_active:
-            await update.message.reply_text("❌ No active broadcast to cancel!")
-            return
-        
-        # Set cancellation flag
-        broadcast_cancelled = True
-        await update.message.reply_text("⏹️ Broadcast cancellation requested. It may take a moment to stop.")
-        logger.info(f"Broadcast cancellation requested by {user_id}")
-        
+        if query.data == "check_membership":
+            await check_membership_callback(update, context)
+        elif query.data == "cancel_broadcast":
+            await cancel_broadcast_callback(update, context)
+        else:
+            await query.answer("Unknown callback", show_alert=True)
+            
     except Exception as e:
-        logger.error(f"Cancel command error: {e}")
-        await update.message.reply_text("⚠️ An error occurred while trying to cancel.")
+        logger.error(f"Callback query handler error: {e}")
 
-@restricted  # Add restricted decorator :cite[1]:cite[7]
+@restricted
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -935,8 +989,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "/removelecture <name> - Remove a lecture group",
                 "/stats - View bot statistics",
                 "/broadcast <message> - Send message to all users (or reply to a message)",
-                "/fcast - Forward a message to all users (reply to a message)",
-                "/cancel - Cancel ongoing broadcast/forward"
+                "/fcat - Forward replied message to all users (preserves original format)"
             ]
             commands.extend(admin_commands)
         
@@ -983,10 +1036,9 @@ def main():
         application.add_handler(CommandHandler("removelecture", remove_lecture))
         application.add_handler(CommandHandler("stats", stats))
         application.add_handler(CommandHandler("broadcast", broadcast))
-        application.add_handler(CommandHandler("fcast", fcast))
-        application.add_handler(CommandHandler("cancel", cancel_broadcast))
+        application.add_handler(CommandHandler("fcat", fcat))  # New forward command
         application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CallbackQueryHandler(check_membership_callback))
+        application.add_handler(CallbackQueryHandler(callback_query_handler))  # Enhanced callback handler
         
         # Add handler for custom lecture commands
         application.add_handler(MessageHandler(filters.COMMAND, lecture_command_handler))
@@ -999,3 +1051,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+                        f"
