@@ -635,7 +635,7 @@ async def fcat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Create cancel button
         cancel_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Cancel Broadcast", callback_data="cancel_broadcast")]
+            [InlineKeyboardButton("🛑 Cancel Forward", callback_data="cancel_broadcast")]
         ])
         
         progress_msg = await update.message.reply_text(
@@ -646,15 +646,19 @@ async def fcat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         # Forward message to all users
-        for user in users_collection.find():
+        user_list = list(users_collection.find())
+        for i, user in enumerate(user_list):
             # Check for cancel request
             if broadcast_control["cancel_requested"]:
-                await progress_msg.edit_text(
-                    f"🛑 Broadcast cancelled!\n"
-                    f"📢 Processed: {success_count + failed_count}/{total_users} users\n"
-                    f"✅ Success: {success_count}\n"
-                    f"❌ Failed: {failed_count}"
-                )
+                try:
+                    await progress_msg.edit_text(
+                        f"🛑 Forward cancelled!\n"
+                        f"📢 Processed: {success_count + failed_count}/{total_users} users\n"
+                        f"✅ Success: {success_count}\n"
+                        f"❌ Failed: {failed_count}"
+                    )
+                except:
+                    pass
                 break
             
             try:
@@ -664,38 +668,44 @@ async def fcat(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     message_id=replied_message.message_id
                 )
                 success_count += 1
-                logger.info(f"Forwarded message to user {user['user_id']}")
+                logger.debug(f"Forwarded message to user {user['user_id']}")
                 
             except Exception as e:
                 failed_count += 1
-                logger.error(f"Failed to forward to user {user['user_id']}: {e}")
+                logger.debug(f"Failed to forward to user {user['user_id']}: {e}")
             
-            # Update progress every 10 sends
-            if (success_count + failed_count) % 10 == 0:
+            # Update progress every 5 sends or at certain milestones
+            if (success_count + failed_count) % 5 == 0 or (i + 1) == len(user_list):
                 try:
-                    await progress_msg.edit_text(
-                        f"📢 Forwarding to {total_users} users...\n"
-                        f"✅ Success: {success_count}\n"
-                        f"❌ Failed: {failed_count}",
-                        reply_markup=cancel_keyboard
-                    )
+                    if not broadcast_control["cancel_requested"]:
+                        await progress_msg.edit_text(
+                            f"📢 Forwarding to {total_users} users...\n"
+                            f"✅ Success: {success_count}\n"
+                            f"❌ Failed: {failed_count}\n"
+                            f"📊 Progress: {i+1}/{total_users}",
+                            reply_markup=cancel_keyboard
+                        )
                 except Exception as e:
                     logger.error(f"Failed to update progress message: {e}")
                     
             # Small delay to avoid rate limiting and keep bot responsive
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.03)
         
         # Reset broadcasting status
         broadcast_control["is_broadcasting"] = False
         broadcast_control["current_broadcast_user"] = None
+        broadcast_control["cancel_requested"] = False
         
         if not broadcast_control["cancel_requested"]:
-            await progress_msg.edit_text(
-                f"🎉 Forward completed!\n"
-                f"📢 Sent to: {total_users} users\n"
-                f"✅ Success: {success_count}\n"
-                f"❌ Failed: {failed_count}"
-            )
+            try:
+                await progress_msg.edit_text(
+                    f"🎉 Forward completed!\n"
+                    f"📢 Total users: {total_users}\n"
+                    f"✅ Success: {success_count}\n"
+                    f"❌ Failed: {failed_count}"
+                )
+            except:
+                pass
         
         logger.info(f"Forward completed. Success: {success_count}, Failed: {failed_count}")
         
@@ -703,7 +713,11 @@ async def fcat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Fcat command error: {e}")
         broadcast_control["is_broadcasting"] = False
         broadcast_control["current_broadcast_user"] = None
-        await update.message.reply_text("⚠️ An error occurred during forwarding.")
+        broadcast_control["cancel_requested"] = False
+        try:
+            await update.message.reply_text("⚠️ An error occurred during forwarding.")
+        except:
+            pass
 
 @restricted
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -744,7 +758,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Create cancel button
         cancel_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Cancel Broadcast", callback_data="cancel_broadcast")]
+            [InlineKeyboardButton("🛑 Cancel Broadcast", callback_data="cancel_broadcast")]
         ])
         
         progress_msg = await update.message.reply_text(
@@ -755,26 +769,31 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         # Function to send message to a user
-        async def send_to_user(user_id, send_func, *args, **kwargs):
+        async def send_to_user(target_user_id, send_func, *args, **kwargs):
             try:
-                await send_func(chat_id=user_id, *args, **kwargs)
+                await send_func(chat_id=target_user_id, *args, **kwargs)
                 return True
             except Exception as e:
-                logger.error(f"Failed to send to user {user_id}: {e}")
+                logger.debug(f"Failed to send to user {target_user_id}: {e}")
                 return False
         
-        for user in users_collection.find():
+        user_list = list(users_collection.find())
+        for i, user in enumerate(user_list):
             # Check for cancel request
             if broadcast_control["cancel_requested"]:
-                await progress_msg.edit_text(
-                    f"🛑 Broadcast cancelled!\n"
-                    f"📢 Processed: {success_count + failed_count}/{total_users} users\n"
-                    f"✅ Success: {success_count}\n"
-                    f"❌ Failed: {failed_count}"
-                )
+                try:
+                    await progress_msg.edit_text(
+                        f"🛑 Broadcast cancelled!\n"
+                        f"📢 Processed: {success_count + failed_count}/{total_users} users\n"
+                        f"✅ Success: {success_count}\n"
+                        f"❌ Failed: {failed_count}"
+                    )
+                except:
+                    pass
                 break
                 
             try:
+                success = False
                 if replied_message:
                     # Send the replied message as-is
                     if replied_message.text:
@@ -846,13 +865,17 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
                     else:
                         # Fallback: forward the message
-                        await context.bot.forward_message(
-                            chat_id=user['user_id'],
-                            from_chat_id=replied_message.chat_id,
-                            message_id=replied_message.message_id,
-                            protect_content=True
-                        )
-                        success = True
+                        try:
+                            await context.bot.forward_message(
+                                chat_id=user['user_id'],
+                                from_chat_id=replied_message.chat_id,
+                                message_id=replied_message.message_id,
+                                protect_content=True
+                            )
+                            success = True
+                        except Exception as e:
+                            logger.debug(f"Failed to forward to user {user['user_id']}: {e}")
+                            success = False
                 else:
                     # Send text message from command arguments
                     message = ' '.join(context.args)
@@ -869,36 +892,42 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     failed_count += 1
                 
-                # Update progress every 10 sends
-                if (success_count + failed_count) % 10 == 0:
+                # Update progress every 5 sends or at certain milestones
+                if (success_count + failed_count) % 5 == 0 or (i + 1) == len(user_list):
                     try:
-                        await progress_msg.edit_text(
-                            f"📢 Broadcasting to {total_users} users...\n"
-                            f"✅ Success: {success_count}\n"
-                            f"❌ Failed: {failed_count}",
-                            reply_markup=cancel_keyboard
-                        )
+                        if not broadcast_control["cancel_requested"]:
+                            await progress_msg.edit_text(
+                                f"📢 Broadcasting to {total_users} users...\n"
+                                f"✅ Success: {success_count}\n"
+                                f"❌ Failed: {failed_count}\n"
+                                f"📊 Progress: {i+1}/{total_users}",
+                                reply_markup=cancel_keyboard
+                            )
                     except Exception as e:
                         logger.error(f"Failed to update progress message: {e}")
                         
                 # Small delay to avoid rate limiting and keep bot responsive
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(0.03)
                     
             except Exception as e:
                 failed_count += 1
-                logger.error(f"Failed to send to user {user['user_id']}: {e}")
+                logger.debug(f"Failed to send to user {user['user_id']}: {e}")
         
         # Reset broadcasting status
         broadcast_control["is_broadcasting"] = False
         broadcast_control["current_broadcast_user"] = None
+        broadcast_control["cancel_requested"] = False
         
         if not broadcast_control["cancel_requested"]:
-            await progress_msg.edit_text(
-                f"🎉 Broadcast completed!\n"
-                f"📢 Sent to: {total_users} users\n"
-                f"✅ Success: {success_count}\n"
-                f"❌ Failed: {failed_count}"
-            )
+            try:
+                await progress_msg.edit_text(
+                    f"🎉 Broadcast completed!\n"
+                    f"📢 Total users: {total_users}\n"
+                    f"✅ Success: {success_count}\n"
+                    f"❌ Failed: {failed_count}"
+                )
+            except:
+                pass
         
         logger.info(f"Broadcast completed. Success: {success_count}, Failed: {failed_count}")
         
@@ -906,13 +935,19 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Broadcast command error: {e}")
         broadcast_control["is_broadcasting"] = False
         broadcast_control["current_broadcast_user"] = None
-        await update.message.reply_text("⚠️ An error occurred during broadcast.")
+        broadcast_control["cancel_requested"] = False
+        try:
+            await update.message.reply_text("⚠️ An error occurred during broadcast.")
+        except:
+            pass
 
 # NEW: Cancel broadcast callback handler
 async def cancel_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
         user_id = query.from_user.id
+        
+        logger.info(f"Cancel broadcast callback from user: {user_id}")
         
         if not await is_owner(user_id):
             await query.answer("❌ Only the bot owner can cancel broadcasts!", show_alert=True)
@@ -928,12 +963,25 @@ async def cancel_broadcast_callback(update: Update, context: ContextTypes.DEFAUL
         
         # Set cancel flag
         broadcast_control["cancel_requested"] = True
-        await query.answer("🛑 Broadcast cancellation requested. Stopping...", show_alert=True)
+        await query.answer("🛑 Broadcast cancellation requested. Stopping...", show_alert=False)
+        
+        # Try to update the message immediately
+        try:
+            await query.edit_message_text(
+                f"🛑 Cancelling broadcast...\n"
+                f"Please wait while we stop the operation."
+            )
+        except Exception as e:
+            logger.error(f"Failed to update message during cancel: {e}")
+        
         logger.info(f"Broadcast cancellation requested by user {user_id}")
         
     except Exception as e:
         logger.error(f"Cancel broadcast callback error: {e}")
-        await query.answer("⚠️ Error cancelling broadcast.", show_alert=True)
+        try:
+            await query.answer("⚠️ Error cancelling broadcast.", show_alert=True)
+        except:
+            pass
 
 @restricted
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
