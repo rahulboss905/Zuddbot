@@ -679,13 +679,16 @@ async def fcat(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"❌ Failed: {failed_count}",
                         reply_markup=cancel_keyboard
                     )
-                except Exception as edit_error:
-                    logger.error(f"Failed to update progress message: {edit_error}")
+                except Exception as e:
+                    logger.error(f"Failed to update progress message: {e}")
                     
-            # Small delay to avoid rate limiting but keep bot responsive
+            # Small delay to avoid rate limiting and keep bot responsive
             await asyncio.sleep(0.05)
         
-        # Final update
+        # Reset broadcasting status
+        broadcast_control["is_broadcasting"] = False
+        broadcast_control["current_broadcast_user"] = None
+        
         if not broadcast_control["cancel_requested"]:
             await progress_msg.edit_text(
                 f"🎉 Forward completed!\n"
@@ -694,23 +697,14 @@ async def fcat(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"❌ Failed: {failed_count}"
             )
         
-        # Reset broadcasting status
-        broadcast_control["is_broadcasting"] = False
-        broadcast_control["cancel_requested"] = False
-        broadcast_control["current_broadcast_user"] = None
-        
         logger.info(f"Forward completed. Success: {success_count}, Failed: {failed_count}")
         
     except Exception as e:
         logger.error(f"Fcat command error: {e}")
-        await update.message.reply_text("⚠️ An error occurred during forwarding.")
-        
-        # Reset broadcasting status on error
         broadcast_control["is_broadcasting"] = False
-        broadcast_control["cancel_requested"] = False
         broadcast_control["current_broadcast_user"] = None
+        await update.message.reply_text("⚠️ An error occurred during forwarding.")
 
-# Enhanced broadcast command with cancel functionality
 @restricted
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -722,13 +716,6 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Unauthorized broadcast attempt by {user_id}")
             return
         
-        # Check if broadcasting is already in progress
-        if broadcast_control["is_broadcasting"]:
-            await update.message.reply_text(
-                "⚠️ Another broadcast is already in progress. Please wait for it to complete."
-            )
-            return
-        
         # Check if message is a reply
         replied_message = update.message.reply_to_message
         
@@ -736,6 +723,13 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 "⚠️ Please provide a message to broadcast or reply to a message.\n"
                 "Usage: /broadcast <your message> OR reply to a message with /broadcast"
+            )
+            return
+        
+        # Check if broadcasting is already in progress
+        if broadcast_control["is_broadcasting"]:
+            await update.message.reply_text(
+                "⚠️ Another broadcast is already in progress. Please wait for it to complete."
             )
             return
         
@@ -884,17 +878,20 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             f"❌ Failed: {failed_count}",
                             reply_markup=cancel_keyboard
                         )
-                    except Exception as edit_error:
-                        logger.error(f"Failed to update progress message: {edit_error}")
+                    except Exception as e:
+                        logger.error(f"Failed to update progress message: {e}")
                         
-                # Small delay to avoid rate limiting but keep bot responsive
+                # Small delay to avoid rate limiting and keep bot responsive
                 await asyncio.sleep(0.05)
                     
             except Exception as e:
                 failed_count += 1
                 logger.error(f"Failed to send to user {user['user_id']}: {e}")
         
-        # Final update
+        # Reset broadcasting status
+        broadcast_control["is_broadcasting"] = False
+        broadcast_control["current_broadcast_user"] = None
+        
         if not broadcast_control["cancel_requested"]:
             await progress_msg.edit_text(
                 f"🎉 Broadcast completed!\n"
@@ -903,65 +900,40 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"❌ Failed: {failed_count}"
             )
         
-        # Reset broadcasting status
-        broadcast_control["is_broadcasting"] = False
-        broadcast_control["cancel_requested"] = False
-        broadcast_control["current_broadcast_user"] = None
-        
         logger.info(f"Broadcast completed. Success: {success_count}, Failed: {failed_count}")
         
     except Exception as e:
         logger.error(f"Broadcast command error: {e}")
-        await update.message.reply_text("⚠️ An error occurred during broadcast.")
-        
-        # Reset broadcasting status on error
         broadcast_control["is_broadcasting"] = False
-        broadcast_control["cancel_requested"] = False
         broadcast_control["current_broadcast_user"] = None
+        await update.message.reply_text("⚠️ An error occurred during broadcast.")
 
-# Callback handler for cancel broadcast
+# NEW: Cancel broadcast callback handler
 async def cancel_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
-        await query.answer()
         user_id = query.from_user.id
         
-        # Check if user is authorized to cancel
         if not await is_owner(user_id):
-            await query.answer("❌ Only bot owner can cancel broadcasts!", show_alert=True)
+            await query.answer("❌ Only the bot owner can cancel broadcasts!", show_alert=True)
             return
         
-        # Check if user is the one who started the broadcast
+        if not broadcast_control["is_broadcasting"]:
+            await query.answer("ℹ️ No broadcast is currently running.", show_alert=True)
+            return
+        
         if broadcast_control["current_broadcast_user"] != user_id:
-            await query.answer("❌ You can only cancel broadcasts you started!", show_alert=True)
+            await query.answer("⚠️ You can only cancel your own broadcasts!", show_alert=True)
             return
         
         # Set cancel flag
-        if broadcast_control["is_broadcasting"]:
-            broadcast_control["cancel_requested"] = True
-            await query.answer("🛑 Broadcast cancellation requested!", show_alert=True)
-            logger.info(f"Broadcast cancellation requested by user {user_id}")
-        else:
-            await query.answer("ℹ️ No active broadcast to cancel.", show_alert=True)
-            
+        broadcast_control["cancel_requested"] = True
+        await query.answer("🛑 Broadcast cancellation requested. Stopping...", show_alert=True)
+        logger.info(f"Broadcast cancellation requested by user {user_id}")
+        
     except Exception as e:
         logger.error(f"Cancel broadcast callback error: {e}")
-        await query.answer("⚠️ Error processing cancel request.", show_alert=True)
-
-# Enhanced callback query handler
-async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        query = update.callback_query
-        
-        if query.data == "check_membership":
-            await check_membership_callback(update, context)
-        elif query.data == "cancel_broadcast":
-            await cancel_broadcast_callback(update, context)
-        else:
-            await query.answer("Unknown callback", show_alert=True)
-            
-    except Exception as e:
-        logger.error(f"Callback query handler error: {e}")
+        await query.answer("⚠️ Error cancelling broadcast.", show_alert=True)
 
 @restricted
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -989,7 +961,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "/removelecture <name> - Remove a lecture group",
                 "/stats - View bot statistics",
                 "/broadcast <message> - Send message to all users (or reply to a message)",
-                "/fcat - Forward replied message to all users (preserves original format)"
+                "/fcat - Forward a message to all users (reply to any message)"
             ]
             commands.extend(admin_commands)
         
@@ -1003,6 +975,22 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Help command sent to {update.effective_user.id}")
     except Exception as e:
         logger.error(f"Help command error: {e}")
+
+# Enhanced callback query handler to handle multiple callback types
+async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        query = update.callback_query
+        callback_data = query.data
+        
+        if callback_data == "check_membership":
+            await check_membership_callback(update, context)
+        elif callback_data == "cancel_broadcast":
+            await cancel_broadcast_callback(update, context)
+        else:
+            await query.answer("Unknown callback data", show_alert=True)
+            
+    except Exception as e:
+        logger.error(f"Callback query handler error: {e}")
 
 def main():
     try:
@@ -1036,7 +1024,7 @@ def main():
         application.add_handler(CommandHandler("removelecture", remove_lecture))
         application.add_handler(CommandHandler("stats", stats))
         application.add_handler(CommandHandler("broadcast", broadcast))
-        application.add_handler(CommandHandler("fcat", fcat))  # New forward command
+        application.add_handler(CommandHandler("fcat", fcat))  # NEW: Forward command
         application.add_handler(CommandHandler("help", help_command))
         application.add_handler(CallbackQueryHandler(callback_query_handler))  # Enhanced callback handler
         
@@ -1051,4 +1039,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-                        f"
